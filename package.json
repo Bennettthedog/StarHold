@@ -1,0 +1,68 @@
+{
+  "name": "starhold",
+  "version": "0.2.1",
+  "description": "StarHold desktop app",
+  "main": "main.js",
+  "private": true,
+  "files": [
+    "main.js",
+    "preload.js",
+    "renderer.js",
+    "index.html",
+    "styles.css",
+    "assign-damage.js",
+    "assign-damage.html",
+    "weapon-select.js",
+    "weapon-select.html",
+    "manual-dac-roll.js",
+    "manual-dac-roll.html",
+    "Data/**"
+  ],
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^40.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.0"
+  },
+  "build": {
+    "appId": "com.warframecommandmatrix.starhold",
+    "productName": "StarHold",
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "assign-damage.js",
+      "assign-damage.html",
+      "weapon-select.js",
+      "weapon-select.html",
+      "manual-dac-roll.js",
+      "manual-dac-roll.html",
+      "Data/**"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Bennettthedog",
+        "repo": "StarHold"
+      }
+    ]
+  }
+}
