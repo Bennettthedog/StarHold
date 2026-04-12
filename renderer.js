@@ -283,6 +283,8 @@ const DAMAGE_OVERLAY_PRESETS = Object.freeze({
 })
 const DEFAULT_DAMAGE_OVERLAY_PRESET = "classic"
 const DAMAGE_OVERLAY_STORAGE_KEY = "starhold.damageOverlayPreset"
+const STARHOLD_SAVE_SCHEMA = "starhold.game"
+const STARHOLD_SAVE_VERSION = 1
 
 const state = {
   doc: null,
@@ -2381,6 +2383,26 @@ function finalizeZoomSectionDrag(event) {
   setStatus(`Zoomed to x=${nextZoom.x}, y=${nextZoom.y}, w=${nextZoom.w}, h=${nextZoom.h}.`)
 }
 
+function updateGamePersistenceButtons() {
+  const hasShips = state.ships.length > 0
+
+  const btnSaveGame = byId("btnSaveGame")
+  if (btnSaveGame) {
+    btnSaveGame.disabled = !hasShips
+    btnSaveGame.title = hasShips
+      ? "Save all loaded ships, damage, colors, and current StarHold state"
+      : "Load at least one ship before saving a game"
+  }
+
+  const btnLoadGame = byId("btnLoadGame")
+  if (btnLoadGame) {
+    btnLoadGame.disabled = false
+    btnLoadGame.title = hasShips
+      ? "Load a saved StarHold game and replace the currently loaded ships"
+      : "Load a saved StarHold game"
+  }
+}
+
 function updateAssignDamageButton() {
   const btn = byId("btnAssignDamage")
   const hasShip = !!getActiveShipRecord()
@@ -2396,6 +2418,7 @@ function updateAssignDamageButton() {
     btnCloseShip.setAttribute("aria-label", hasShip ? "Close current ship" : "No ship loaded")
   }
 
+  updateGamePersistenceButtons()
   updateManualDamageControls()
   updateRotateShipsButton()
 }
@@ -4136,6 +4159,285 @@ function loadImage(dataUrl) {
   })
 }
 
+function cloneJsonValue(value, fallback = null) {
+  if (value === undefined) return fallback
+  try {
+    return JSON.parse(JSON.stringify(value))
+  } catch {
+    return fallback
+  }
+}
+
+function getShipCountLabel(count) {
+  const n = Math.max(0, normalizeInteger(count, 0))
+  return `${n} ship${n === 1 ? "" : "s"}`
+}
+
+function cloneCropForSave(rawCrop) {
+  if (!rawCrop || typeof rawCrop !== "object") return null
+
+  const x = Number(rawCrop.x)
+  const y = Number(rawCrop.y)
+  const w = Number(rawCrop.w)
+  const h = Number(rawCrop.h)
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) return null
+  if (w <= 0 || h <= 0) return null
+
+  const out = {
+    x: Math.floor(x),
+    y: Math.floor(y),
+    w: Math.max(1, Math.floor(w)),
+    h: Math.max(1, Math.floor(h)),
+    source: String(rawCrop.source || "").trim() || "saved"
+  }
+
+  for (const key of ["shieldRectCount", "sourceRectCount", "pad"]) {
+    const n = Number(rawCrop[key])
+    if (Number.isFinite(n)) out[key] = n
+  }
+
+  const rawBounds = rawCrop.rawBounds && typeof rawCrop.rawBounds === "object"
+    ? cloneJsonValue(rawCrop.rawBounds, null)
+    : null
+  if (rawBounds) out.rawBounds = rawBounds
+
+  return out
+}
+
+function normalizeSavedImageCrop(rawCrop, fallbackCrop, image) {
+  const crop = cloneCropForSave(rawCrop)
+  if (!crop) return fallbackCrop || null
+
+  const imgW = Number(image?.width)
+  const imgH = Number(image?.height)
+  if (!Number.isFinite(imgW) || !Number.isFinite(imgH) || imgW <= 0 || imgH <= 0) {
+    return crop
+  }
+
+  const x = Math.max(0, Math.min(Math.floor(crop.x), Math.max(0, Math.floor(imgW) - 1)))
+  const y = Math.max(0, Math.min(Math.floor(crop.y), Math.max(0, Math.floor(imgH) - 1)))
+  const maxW = Math.max(1, Math.floor(imgW) - x)
+  const maxH = Math.max(1, Math.floor(imgH) - y)
+
+  return {
+    ...crop,
+    x,
+    y,
+    w: Math.max(1, Math.min(Math.floor(crop.w), maxW)),
+    h: Math.max(1, Math.min(Math.floor(crop.h), maxH)),
+    source: crop.source || fallbackCrop?.source || "saved"
+  }
+}
+
+function buildShipSaveRecord(ship, index) {
+  if (!ship || typeof ship !== "object") return null
+  const runtimeDamage = ensureShipRuntimeDamageState(ship)
+
+  return {
+    saveVersion: STARHOLD_SAVE_VERSION,
+    shipIndex: index,
+    doc: cloneJsonValue(ship.doc, null),
+    imageDataUrl: String(ship.imageDataUrl || ""),
+    imagePath: String(ship.imagePath || ""),
+    jsonPath: String(ship.jsonPath || ""),
+    folderPath: String(ship.folderPath || ""),
+    jsonFile: String(ship.jsonFile || ""),
+    imageFile: String(ship.imageFile || ""),
+    baseName: String(ship.baseName || ""),
+    shipLabel: String(ship.shipLabel || ""),
+    crop: cloneCropForSave(ship.crop),
+    zoomCrop: cloneCropForSave(ship.zoomCrop),
+    runtimeDamage: cloneJsonValue(runtimeDamage, {}),
+    damageAssignment: cloneJsonValue(ship.damageAssignment || null, null)
+  }
+}
+
+function buildGameSavePayload() {
+  const ships = state.ships
+    .map((ship, index) => buildShipSaveRecord(ship, index))
+    .filter(Boolean)
+
+  return {
+    schema: STARHOLD_SAVE_SCHEMA,
+    version: STARHOLD_SAVE_VERSION,
+    savedAt: new Date().toISOString(),
+    appVersion: String(state.appVersion || ""),
+    activeShipIndex: Number.isInteger(state.activeShipIndex) ? state.activeShipIndex : -1,
+    damageOverlayPreset: getDamageOverlayPreset(),
+    ships
+  }
+}
+
+async function saveGame() {
+  if (!window.api || typeof window.api.saveGame !== "function") {
+    setStatus("Save game API is not available.")
+    return
+  }
+  if (state.ships.length === 0) {
+    setStatus("Load at least one ship before saving a game.")
+    return
+  }
+
+  const payload = buildGameSavePayload()
+  setStatus(`Saving ${getShipCountLabel(payload.ships.length)}...`)
+  try {
+    const res = await window.api.saveGame(payload)
+    if (!res || !res.ok) {
+      setStatus(res?.error || "Failed to save game.")
+      return
+    }
+    if (res.canceled) {
+      setStatus("Save canceled.")
+      return
+    }
+
+    setStatus(`Saved ${getShipCountLabel(payload.ships.length)}.\n${res.filePath || ""}`.trim())
+  } catch (err) {
+    setStatus(err?.message || "Failed to save game.")
+  }
+}
+
+function getSavedShipList(saveGame) {
+  const input = saveGame && typeof saveGame === "object" ? saveGame : null
+  if (!input) return []
+  return Array.isArray(input.ships) ? input.ships : []
+}
+
+async function restoreShipRecordFromSave(savedShip, index) {
+  if (!savedShip || typeof savedShip !== "object") {
+    throw new Error(`Ship ${index + 1} is not a valid saved ship record.`)
+  }
+
+  const doc = cloneJsonValue(savedShip.doc, null)
+  if (!doc || typeof doc !== "object") {
+    throw new Error(`Ship ${index + 1} is missing saved ship JSON data.`)
+  }
+
+  const imageDataUrl = String(savedShip.imageDataUrl || "")
+  if (!imageDataUrl) {
+    throw new Error(`Ship ${index + 1} is missing saved ship image data.`)
+  }
+
+  const img = await loadImage(imageDataUrl)
+  const computedCrop = computeShieldCrop(doc, img)
+  const crop = normalizeSavedImageCrop(savedShip.crop, computedCrop, img) || computedCrop
+  const shipLabel = String(savedShip.shipLabel || "").trim() ||
+    getShipDisplayLabel(doc, savedShip.baseName || savedShip.jsonFile || `Ship ${index + 1}`)
+
+  const shipRecord = {
+    doc,
+    image: img,
+    imageDataUrl,
+    imagePath: String(savedShip.imagePath || ""),
+    jsonPath: String(savedShip.jsonPath || ""),
+    folderPath: String(savedShip.folderPath || ""),
+    jsonFile: String(savedShip.jsonFile || ""),
+    imageFile: String(savedShip.imageFile || ""),
+    baseName: String(savedShip.baseName || ""),
+    shipLabel,
+    crop,
+    zoomCrop: null,
+    runtimeDamage: cloneJsonValue(savedShip.runtimeDamage, {}),
+    damageAssignment: cloneJsonValue(savedShip.damageAssignment || null, null),
+    damageAssignmentPreview: null
+  }
+
+  ensureShipRuntimeDamageState(shipRecord)
+  const savedZoom = normalizeSavedImageCrop(savedShip.zoomCrop, null, img)
+  if (savedZoom) {
+    setShipZoomCrop(shipRecord, savedZoom)
+  }
+
+  return shipRecord
+}
+
+async function restoreGameFromSave(saveGame, filePath = "") {
+  const input = saveGame && typeof saveGame === "object" ? saveGame : null
+  if (!input) {
+    throw new Error("The selected file is not a valid StarHold save.")
+  }
+
+  const savedShips = getSavedShipList(input)
+  if (savedShips.length === 0) {
+    throw new Error("The selected save does not contain any ships.")
+  }
+
+  const restoredShips = []
+  const failures = []
+  for (let i = 0; i < savedShips.length; i += 1) {
+    try {
+      restoredShips.push(await restoreShipRecordFromSave(savedShips[i], i))
+    } catch (err) {
+      failures.push(`Ship ${i + 1}: ${err?.message || "failed to restore"}`)
+    }
+  }
+
+  if (restoredShips.length === 0) {
+    throw new Error(`No ships could be restored from the selected save.\n${failures.join("\n")}`)
+  }
+
+  stopShipRotation({ quiet: true })
+  state.manualDamageMode = ""
+  state.zoomSectionMode = false
+  state.zoomDrag = null
+  state.pendingManualDacChartClearShip = null
+  state.ships = restoredShips
+  state.activeShipIndex = -1
+  state.damageOverlayPreset = normalizeDamageOverlayPreset(input.damageOverlayPreset)
+  renderDamageColorSelector()
+  storeDamageOverlayPresetToStorage(state.damageOverlayPreset)
+
+  const activeIndex = restoredShips.length > 0
+    ? clampInteger(input.activeShipIndex, 0, restoredShips.length - 1)
+    : -1
+  if (activeIndex >= 0) {
+    activateLoadedShip(activeIndex, { quiet: true })
+  } else {
+    applyShipRecordToState(null)
+    renderShipSwitcher()
+    renderShipInfo()
+    renderDamageChart()
+    renderDamageAssignmentSummary()
+    renderShipCanvas()
+  }
+
+  let status = `Loaded ${getShipCountLabel(restoredShips.length)} from saved game.`
+  if (filePath) status += `\n${filePath}`
+  if (failures.length > 0) {
+    status += `\nSkipped ${failures.length} ship${failures.length === 1 ? "" : "s"} that could not be restored.`
+  }
+  setStatus(status)
+}
+
+async function loadGame() {
+  if (!window.api || typeof window.api.loadGame !== "function") {
+    setStatus("Load game API is not available.")
+    return
+  }
+
+  if (state.ships.length > 0 && typeof window.confirm === "function") {
+    const replace = window.confirm("Load a saved game? This will replace the currently loaded ships in StarHold.")
+    if (!replace) return
+  }
+
+  setStatus("Choose a StarHold save file...")
+  try {
+    const res = await window.api.loadGame()
+    if (!res || !res.ok) {
+      setStatus(res?.error || "Failed to load game.")
+      return
+    }
+    if (res.canceled) {
+      setStatus("Load canceled.")
+      return
+    }
+
+    await restoreGameFromSave(res.saveGame, res.filePath || "")
+  } catch (err) {
+    setStatus(err?.message || "Failed to load game.")
+  }
+}
+
 async function loadStarholdSettings() {
   updateSettingsButton()
   if (!window.api || typeof window.api.getSettings !== "function") return
@@ -4255,6 +4557,12 @@ function init() {
 
   const btnAssignDamage = byId("btnAssignDamage")
   if (btnAssignDamage) btnAssignDamage.onclick = () => openAssignDamageModal()
+
+  const btnSaveGame = byId("btnSaveGame")
+  if (btnSaveGame) btnSaveGame.onclick = () => saveGame()
+
+  const btnLoadGame = byId("btnLoadGame")
+  if (btnLoadGame) btnLoadGame.onclick = () => loadGame()
 
   const btnCloseShip = byId("btnCloseShip")
   if (btnCloseShip) btnCloseShip.onclick = () => closeActiveShip()

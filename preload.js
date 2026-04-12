@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld("api", {
   getRollsConfig: () => ipcRenderer.invoke("starhold:getRollsConfig"),
   getSettings: () => ipcRenderer.invoke("starhold:getSettings"),
   chooseDefaultShipFolder: () => ipcRenderer.invoke("starhold:chooseDefaultShipFolder"),
+  saveGame: (payload) => ipcRenderer.invoke("starhold:saveGame", payload),
+  loadGame: () => ipcRenderer.invoke("starhold:loadGame"),
   openAssignDamageWindow: () => ipcRenderer.invoke("starhold:openAssignDamageWindow"),
   openWeaponSelectWindow: () => ipcRenderer.invoke("starhold:openWeaponSelectWindow"),
   setAssignDamageWindowState: (payload) => ipcRenderer.invoke("starhold:setAssignDamageWindowState", payload),

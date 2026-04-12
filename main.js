@@ -17,10 +17,18 @@ let manualDacRollWindow = null
 let manualDacRollWindowState = null
 const STARHOLD_SETTINGS_FILE = "starhold-settings.json"
 const STARHOLD_RELEASES_URL = "https://github.com/Bennettthedog/StarHold/releases"
+const STARHOLD_SAVE_DEFAULT_FILE = "StarHold Game.starhold-save.json"
+const STARHOLD_SAVE_FILTERS = [
+  { name: "StarHold Save", extensions: ["json"] }
+]
 
 function sendToMainWindow(channel, payload = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return
   mainWindow.webContents.send(channel, payload)
+}
+
+function getDialogParentWindow() {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
 }
 
 function createWindow() {
@@ -187,6 +195,13 @@ function getWorkspaceDefaultShipFolder() {
 
 function getSettingsFilePath() {
   return path.join(app.getPath("userData"), STARHOLD_SETTINGS_FILE)
+}
+
+function normalizeSaveFilePath(filePath) {
+  const raw = String(filePath || "").trim()
+  if (!raw) return ""
+  if (/\.json$/i.test(raw)) return raw
+  return `${raw}.starhold-save.json`
 }
 
 function normalizeFolderPath(folderPath) {
@@ -422,6 +437,64 @@ ipcMain.handle("starhold:chooseDefaultShipFolder", async () => {
     return { ok: true, canceled: false, defaultShipFolder: saved.defaultShipFolder }
   } catch (err) {
     return { ok: false, error: err?.message || "Failed to choose default ship folder." }
+  }
+})
+
+ipcMain.handle("starhold:saveGame", async (_event, payload) => {
+  try {
+    if (!payload || typeof payload !== "object") {
+      return { ok: false, error: "No StarHold game state was provided." }
+    }
+
+    const dialogOptions = {
+      title: "Save StarHold game",
+      defaultPath: path.join(app.getPath("documents"), STARHOLD_SAVE_DEFAULT_FILE),
+      filters: STARHOLD_SAVE_FILTERS
+    }
+    const parent = getDialogParentWindow()
+    const picked = parent
+      ? await dialog.showSaveDialog(parent, dialogOptions)
+      : await dialog.showSaveDialog(dialogOptions)
+
+    if (picked.canceled || !picked.filePath) {
+      return { ok: true, canceled: true }
+    }
+
+    const filePath = normalizeSaveFilePath(picked.filePath)
+    if (!filePath) {
+      return { ok: false, error: "No save file path was selected." }
+    }
+
+    await fs.mkdir(path.dirname(filePath), { recursive: true })
+    await fs.writeFile(filePath, JSON.stringify(payload, null, 2), "utf-8")
+    return { ok: true, canceled: false, filePath }
+  } catch (err) {
+    return { ok: false, error: err?.message || "Failed to save StarHold game." }
+  }
+})
+
+ipcMain.handle("starhold:loadGame", async () => {
+  try {
+    const dialogOptions = {
+      title: "Load StarHold game",
+      properties: ["openFile"],
+      filters: STARHOLD_SAVE_FILTERS
+    }
+    const parent = getDialogParentWindow()
+    const picked = parent
+      ? await dialog.showOpenDialog(parent, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions)
+
+    if (picked.canceled || !picked.filePaths || picked.filePaths.length === 0) {
+      return { ok: true, canceled: true }
+    }
+
+    const filePath = picked.filePaths[0]
+    const text = await fs.readFile(filePath, "utf-8")
+    const saveGame = JSON.parse(text)
+    return { ok: true, canceled: false, filePath, saveGame }
+  } catch (err) {
+    return { ok: false, error: err?.message || "Failed to load StarHold game." }
   }
 })
 
