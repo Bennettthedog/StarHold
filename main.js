@@ -22,6 +22,32 @@ const STARHOLD_SAVE_FILTERS = [
   { name: "StarHold Save", extensions: ["json"] }
 ]
 
+function getShipyardDataCandidatePaths() {
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "Shipyard", "Shipyard", "Data.json"),
+    path.resolve(process.cwd(), "Shipyard", "Shipyard", "Data.json"),
+    path.resolve(process.cwd(), "..", "Shipyard", "Shipyard", "Data.json"),
+    path.resolve(__dirname, "Data", "ShipyardData.json")
+  ]
+  return Array.from(new Set(candidates))
+}
+
+async function readShipyardDataConfig() {
+  const failures = []
+  for (const filePath of getShipyardDataCandidatePaths()) {
+    try {
+      const text = await fs.readFile(filePath, "utf-8")
+      return {
+        filePath,
+        dataConfig: JSON.parse(text)
+      }
+    } catch (err) {
+      failures.push(`${filePath}: ${err?.message || "failed to read"}`)
+    }
+  }
+  throw new Error(`Failed to load Shipyard Data.json.\n${failures.join("\n")}`)
+}
+
 function sendToMainWindow(channel, payload = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return
   mainWindow.webContents.send(channel, payload)
@@ -373,6 +399,15 @@ ipcMain.handle("starhold:getRollsConfig", async () => {
   }
 })
 
+ipcMain.handle("starhold:getShipyardDataConfig", async () => {
+  try {
+    const { filePath, dataConfig } = await readShipyardDataConfig()
+    return { ok: true, dataConfig, filePath }
+  } catch (err) {
+    return { ok: false, error: err?.message || "Failed to load Shipyard Data.json." }
+  }
+})
+
 ipcMain.handle("starhold:getAppVersion", async () => {
   try {
     return { ok: true, version: app.getVersion() }
@@ -534,6 +569,19 @@ ipcMain.handle("starhold:setAssignDamageWindowState", async (_event, payload) =>
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err?.message || "Failed to update Assign Damage window state." }
+  }
+})
+
+ipcMain.handle("starhold:setAssignDamageDestructionPreview", async (_event, payload) => {
+  try {
+    let shown = false
+    if (assignDamageWindow && !assignDamageWindow.isDestroyed()) {
+      assignDamageWindow.webContents.send("starhold:assignDamageDestructionPreview", payload && typeof payload === "object" ? payload : null)
+      shown = true
+    }
+    return { ok: true, shown }
+  } catch (err) {
+    return { ok: false, error: err?.message || "Failed to update Assign Damage destruction preview." }
   }
 })
 

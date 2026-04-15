@@ -1,6 +1,6 @@
 {
   "name": "starhold",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "description": "StarHold desktop app",
   "main": "main.js",
   "private": true,
@@ -23,7 +23,7 @@
     "dist": "electron-builder --win nsis"
   },
   "devDependencies": {
-    "electron": "^40.0.0",
+    "electron": "40.6.1",
     "electron-builder": "^26.0.12"
   },
   "dependencies": {
@@ -34,7 +34,7 @@
     "productName": "StarHold",
     "artifactName": "${productName}-Setup-${version}.${ext}",
     "directories": {
-      "output": "dist"
+      "output": "../dist"
     },
     "files": [
       "main.js",

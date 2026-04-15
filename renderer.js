@@ -132,6 +132,91 @@ const DAC_LABEL_FALLBACK_SSD_KEYS = {
 const RANK_ORDERED_SSD_KEYS = new Set(["sensor", "scanner", "damage control"])
 const USER_SELECTABLE_WEAPON_GROUP_KEYS = new Set(["phaser", "heavy", "drone"])
 const WEAPON_SELECTION_SKIP_TOKEN = "__STARHOLD_WEAPON_SKIP__"
+const DESTRUCTION_PREVIEW_DEBOUNCE_MS = 150
+const DESTRUCTION_PREVIEW_MAX_TRIALS = 250
+const DESTRUCTION_PREVIEW_MIN_TRIALS = 100
+const DESTRUCTION_PREVIEW_MAX_DAC_HIT_SIMULATIONS = 15000
+const OPTION_MOUNT_TYPE_KEY = "optionmount"
+const OPTION_MOUNT_NONE_VALUE = "__STARHOLD_OPTION_MOUNT_NONE__"
+const OPTION_MOUNT_NONE_LABEL = "No box mounted"
+const OPTION_MOUNT_HEAVY_WEAPON_TYPE_KEYS = new Set([
+  "photon torpedo",
+  "web caster",
+  "plasmatic pulsar device",
+  "web breaker",
+  "implosion bolt",
+  "subspace rocket",
+  "particle cannon",
+  "option mount",
+  "disruptor",
+  "plasma torpedo d",
+  "subspace energy field",
+  "dark matter torpedos",
+  "dark matter torpedo",
+  "plasma torpedo f",
+  "plasma torpedo g",
+  "plasma torpedo s",
+  "plasma torpedo r",
+  "hellbore",
+  "fusion beam",
+  "expanding sphere generator"
+])
+const OPTION_MOUNT_FALLBACK_CHOICES = Object.freeze([
+  "Probe",
+  "Tractor",
+  "Bridge",
+  "Forward Hull",
+  "APR",
+  "Battery",
+  "Cargo",
+  "Transporter",
+  "Impulse",
+  "Emergency Bridge",
+  "Shuttle",
+  "Lab",
+  "Center Hull",
+  "Left Warp",
+  "Right Warp",
+  "Center Warp",
+  "Aft Hull",
+  "Security",
+  "Auxiliary Control",
+  "Repair",
+  "Armor",
+  "Web Device",
+  "Phaser 1",
+  "Phaser 2",
+  "Phaser 3",
+  "Phaser 4",
+  "Phaser G",
+  "Photon Torpedo",
+  "Disruptor",
+  "Plasma Torpedo D",
+  "Plasma Torpedo F",
+  "Plasma Torpedo G",
+  "Plasma Torpedo S",
+  "Plasma Torpedo R",
+  "Fusion Beam",
+  "Hellbore",
+  "Drone",
+  "ADD",
+  "Plasmatic Pulsar Device",
+  "Expanding Sphere Generator",
+  "Web Caster",
+  "Web Breaker",
+  "Implosion Bolt",
+  "Subspace Rocket",
+  "Particle Cannon",
+  "Subspace Energy Field",
+  "Dark Matter Torpedos",
+  "Excess Damage",
+  "Damage Control",
+  "Sensor",
+  "Scanner",
+  "Drone",
+  "ADD",
+  "Flag Bridge"
+])
 const SHIP_ROTATION_INTERVAL_MS = 7000
 const DUPLICATE_SHIP_MARKER_COLORS = ["#d92b2b", "#2f6be6", "#2d9b47", "#8b5a2b", "#7a3bd2", "#e24e9c", "#e2b91f"]
 const DUPLICATE_SHIP_MARKER_COLOR_NAMES = Object.freeze({
@@ -298,6 +383,9 @@ const state = {
   ships: [],
   activeShipIndex: -1,
   rollsConfig: null,
+  shipyardDataConfig: null,
+  shipyardDataPath: "",
+  shipyardDataLoadPromise: null,
   rollsLabelEntriesByChartLabel: new Map(),
   rollsLabelEntriesByLabel: new Map(),
   manualDacPromptPromise: null,
@@ -307,6 +395,8 @@ const state = {
   assignDamageWindowOpen: false,
   weaponSelectWindowOpen: false,
   assignDamageWeaponPromptSyncPromise: null,
+  assignDamageDestructionPreviewTimerId: null,
+  assignDamageDestructionPreviewRequestId: 0,
   weaponSelectWindowClosingPromise: null,
   ignoreNextWeaponSelectWindowClosed: false,
   shipRotationTimerId: null,
@@ -315,7 +405,10 @@ const state = {
   zoomSectionMode: false,
   zoomDrag: null,
   damageOverlayPreset: DEFAULT_DAMAGE_OVERLAY_PRESET,
-  appVersion: ""
+  appVersion: "",
+  optionMountPromptPromise: null,
+  optionMountPromptResolver: null,
+  optionMountPromptShip: null
 }
 
 function byId(id) {
@@ -403,6 +496,67 @@ function normalizeLabelToken(value) {
     .toLowerCase()
 }
 
+function isOptionMountType(value) {
+  return normalizeLabelToken(value).replace(/\s+/g, "") === OPTION_MOUNT_TYPE_KEY
+}
+
+function isOptionMountEntry(entry) {
+  if (!entry || typeof entry !== "object") return false
+  return (
+    isOptionMountType(entry.type) ||
+    isOptionMountType(entry.name) ||
+    isOptionMountType(entry.label)
+  )
+}
+
+function normalizeOptionMountSelectionValue(value) {
+  const raw = String(value || "").replace(/\s+/g, " ").trim()
+  if (!raw) return ""
+  const rawKey = normalizeLabelToken(raw)
+  if (
+    raw === OPTION_MOUNT_NONE_VALUE ||
+    rawKey === normalizeLabelToken(OPTION_MOUNT_NONE_LABEL) ||
+    rawKey === "no weapon mounted"
+  ) {
+    return OPTION_MOUNT_NONE_VALUE
+  }
+  if (isOptionMountType(raw)) return ""
+  return raw
+}
+
+function normalizeOptionMountSelectionRecord(value) {
+  const rawType = value && typeof value === "object" && !Array.isArray(value)
+    ? value.type
+    : value
+  const type = normalizeOptionMountSelectionValue(rawType)
+  return type ? { type } : null
+}
+
+function getOptionMountSelectionLabel(value) {
+  const normalized = normalizeOptionMountSelectionValue(value)
+  if (!normalized) return ""
+  return normalized === OPTION_MOUNT_NONE_VALUE ? OPTION_MOUNT_NONE_LABEL : normalized
+}
+
+function getOptionMountWeaponCategory(value) {
+  const normalized = normalizeOptionMountSelectionValue(value)
+  if (!normalized || normalized === OPTION_MOUNT_NONE_VALUE) return ""
+  const key = normalizeLabelToken(normalized)
+  if (key.includes("phaser")) return "phaser"
+  if (key === "drone" || key === "add" || key.includes("drone")) return "drone"
+  if (OPTION_MOUNT_HEAVY_WEAPON_TYPE_KEYS.has(key) || /\btorp/.test(key)) return "heavy"
+  return ""
+}
+
+function getShipDocument(input) {
+  return input?.doc && typeof input.doc === "object" ? input.doc : input
+}
+
+function buildOptionMountId(ssdKey, sourceOrder) {
+  const key = normalizeLabelToken(ssdKey) || "ssd"
+  return `${key}:${Math.max(0, normalizeInteger(sourceOrder, 0))}`
+}
+
 function setRollsConfig(rollsConfig) {
   state.rollsConfig = rollsConfig && typeof rollsConfig === "object" ? rollsConfig : null
   state.rollsLabelEntriesByChartLabel = new Map()
@@ -420,6 +574,62 @@ function setRollsConfig(rollsConfig) {
       state.rollsLabelEntriesByLabel.set(labelKey, entry)
     }
   }
+}
+
+function setShipyardDataConfig(dataConfig, filePath = "") {
+  state.shipyardDataConfig = dataConfig && typeof dataConfig === "object" ? dataConfig : null
+  state.shipyardDataPath = String(filePath || "").trim()
+}
+
+function loadShipyardDataConfig() {
+  const loadPromise = (async () => {
+    if (!window.api || typeof window.api.getShipyardDataConfig !== "function") {
+      setShipyardDataConfig(null)
+      return
+    }
+
+    try {
+      const res = await window.api.getShipyardDataConfig()
+      if (!res || !res.ok) {
+        setShipyardDataConfig(null)
+        return
+      }
+      setShipyardDataConfig(res.dataConfig || null, res.filePath || "")
+    } catch {
+      setShipyardDataConfig(null)
+    }
+  })()
+
+  state.shipyardDataLoadPromise = loadPromise
+  return loadPromise
+}
+
+async function waitForShipyardDataConfigLoad() {
+  if (!state.shipyardDataLoadPromise) return
+  try {
+    await state.shipyardDataLoadPromise
+  } catch {
+    // The prompt can still use fallback choices.
+  }
+}
+
+function getShipyardBoxChoiceValues() {
+  const sections = Array.isArray(state.shipyardDataConfig?.sections)
+    ? state.shipyardDataConfig.sections
+    : []
+  const boxesSection = sections.find((section) => normalizeLabelToken(section?.label) === "boxes")
+  const entries = Array.isArray(boxesSection?.entries) ? boxesSection.entries : []
+  const out = []
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue
+    const types = Array.isArray(entry.types) ? entry.types : []
+    if (types.some((type) => normalizeLabelToken(type) === "external")) continue
+    const name = String(entry.name || "").replace(/\s+/g, " ").trim()
+    if (name) out.push(name)
+  }
+
+  return out
 }
 
 function findRollsLabelEntry(chartCellLabel) {
@@ -468,6 +678,32 @@ async function loadAppVersion() {
 function rollTwoSixSidedDice() {
   const die1 = 1 + Math.floor(Math.random() * 6)
   const die2 = 1 + Math.floor(Math.random() * 6)
+  return {
+    die1,
+    die2,
+    total: die1 + die2
+  }
+}
+
+function createSeededRandom(seedText) {
+  const text = String(seedText || "starhold")
+  let seed = 2166136261
+  for (let i = 0; i < text.length; i += 1) {
+    seed ^= text.charCodeAt(i)
+    seed = Math.imul(seed, 16777619) >>> 0
+  }
+  if (seed === 0) seed = 1
+
+  return () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return seed / 4294967296
+  }
+}
+
+function rollTwoSixSidedDiceWithRandom(randomFn) {
+  const nextRandom = typeof randomFn === "function" ? randomFn : Math.random
+  const die1 = 1 + Math.floor(nextRandom() * 6)
+  const die2 = 1 + Math.floor(nextRandom() * 6)
   return {
     die1,
     die2,
@@ -595,6 +831,297 @@ function updateSettingsButton() {
 
   btn.title = title
   btn.setAttribute("aria-label", hasFolder ? "Change default ship folder" : "Choose default ship folder")
+}
+
+function resolveOptionMountPrompt(result) {
+  const overlay = byId("optionMountOverlay")
+  if (overlay) {
+    overlay.classList.add("hidden")
+    overlay.setAttribute("aria-hidden", "true")
+  }
+
+  const list = byId("optionMountList")
+  if (list) list.innerHTML = ""
+
+  const hint = byId("optionMountHint")
+  if (hint) {
+    hint.textContent = ""
+    hint.classList.remove("error")
+  }
+
+  for (const id of ["btnOptionMountSave", "btnOptionMountCancel", "btnOptionMountClose"]) {
+    const button = byId(id)
+    if (button) button.onclick = null
+  }
+
+  const resolver = state.optionMountPromptResolver
+  state.optionMountPromptResolver = null
+  state.optionMountPromptPromise = null
+  state.optionMountPromptShip = null
+  if (typeof resolver === "function") {
+    resolver(result || { saved: false, canceled: true })
+  }
+}
+
+function coerceOptionMountPromptValue(rawValue, choices) {
+  const normalized = normalizeOptionMountSelectionValue(rawValue)
+  if (!normalized) return ""
+  if (normalized === OPTION_MOUNT_NONE_VALUE) return OPTION_MOUNT_NONE_VALUE
+
+  const wanted = normalizeLabelToken(normalized)
+  const list = Array.isArray(choices) ? choices : []
+  for (const choice of list) {
+    if (normalizeLabelToken(choice) === wanted) return choice
+  }
+  return ""
+}
+
+function fallbackPromptForShipOptionMountSelections(ship) {
+  const mounts = getShipOptionMountEntries(ship)
+  if (mounts.length === 0) return Promise.resolve({ saved: true, skipped: true })
+
+  if (typeof window.prompt !== "function") {
+    return Promise.resolve({ saved: false, canceled: true })
+  }
+
+  const choices = getOptionMountChoiceValues(ship)
+  const choiceText = [OPTION_MOUNT_NONE_LABEL, ...choices].join(", ")
+  const selectedByMount = new Map()
+
+  for (let i = 0; i < mounts.length; i += 1) {
+    const mount = mounts[i]
+    const existing = getOptionMountSelectionLabel(getShipOptionMountSelectionType(ship, mount.id))
+    const raw = window.prompt(
+      `${formatOptionMountDisplayLabel(mount, i)} counts as:\n${choiceText}`,
+      existing && existing !== OPTION_MOUNT_NONE_LABEL ? existing : ""
+    )
+    if (raw == null) return Promise.resolve({ saved: false, canceled: true })
+    const selected = coerceOptionMountPromptValue(raw, choices)
+    if (!selected) return Promise.resolve({ saved: false, canceled: true })
+    selectedByMount.set(mount.id, selected)
+  }
+
+  for (const mount of mounts) {
+    setShipOptionMountSelection(ship, mount, selectedByMount.get(mount.id))
+  }
+
+  renderShipInfo()
+  renderShipCanvas()
+  updateOptionMountButton()
+  syncAssignDamageWindowStateForActiveShip()
+  return Promise.resolve({ saved: true })
+}
+
+async function promptForShipOptionMountSelections(ship, options = {}) {
+  if (!ship || typeof ship !== "object") {
+    return { saved: false, canceled: true }
+  }
+
+  pruneShipOptionMountSelections(ship)
+  const mounts = getShipOptionMountEntries(ship)
+  if (mounts.length === 0) return { saved: true, skipped: true }
+
+  if (state.optionMountPromptPromise) return state.optionMountPromptPromise
+  await waitForShipyardDataConfigLoad()
+
+  const overlay = byId("optionMountOverlay")
+  const list = byId("optionMountList")
+  const lead = byId("optionMountLead")
+  const hint = byId("optionMountHint")
+  const saveButton = byId("btnOptionMountSave")
+  const cancelButton = byId("btnOptionMountCancel")
+  const closeButton = byId("btnOptionMountClose")
+  if (!overlay || !list || !saveButton || !cancelButton || !closeButton) {
+    return fallbackPromptForShipOptionMountSelections(ship)
+  }
+
+  const required = options && options.required === true
+  const shipName = String(ship.shipLabel || ship.jsonFile || "this ship").trim() || "this ship"
+  const choices = getOptionMountChoiceValues(ship)
+  const selectionControls = []
+
+  if (lead) {
+    lead.textContent = `Choose what each option mount counts as for ${shipName}. These choices are stored with this game only.`
+  }
+
+  list.innerHTML = ""
+  if (hint) {
+    hint.textContent = "The ship JSON is not changed."
+    hint.classList.remove("error")
+  }
+
+  for (let i = 0; i < mounts.length; i += 1) {
+    const mount = mounts[i]
+    const row = document.createElement("label")
+    row.className = "optionMountItem"
+
+    const text = document.createElement("div")
+    text.className = "optionMountLabel"
+    const strong = document.createElement("strong")
+    strong.textContent = formatOptionMountDisplayLabel(mount, i)
+    const sub = document.createElement("span")
+    const source = String(mount.ssdKey || "SSD").trim() || "SSD"
+    sub.textContent = `Source: ${source} box ${normalizeInteger(mount.index, 0) + 1}`
+    text.appendChild(strong)
+    text.appendChild(sub)
+
+    const shell = document.createElement("div")
+    shell.className = "selectFieldShell optionMountSelectShell"
+
+    const select = document.createElement("select")
+    select.className = "optionMountSelect"
+    select.dataset.optionMountId = mount.id
+
+    const placeholder = document.createElement("option")
+    placeholder.value = ""
+    placeholder.textContent = "Choose..."
+    select.appendChild(placeholder)
+
+    const noneOption = document.createElement("option")
+    noneOption.value = OPTION_MOUNT_NONE_VALUE
+    noneOption.textContent = OPTION_MOUNT_NONE_LABEL
+    select.appendChild(noneOption)
+
+    const effectiveChoices = choices.slice()
+
+    for (const choice of effectiveChoices) {
+      const option = document.createElement("option")
+      option.value = choice
+      option.textContent = choice
+      select.appendChild(option)
+    }
+    const existing = getShipOptionMountSelectionType(ship, mount.id)
+    const allowedExisting = coerceOptionMountPromptValue(existing, effectiveChoices)
+    select.value = allowedExisting || ""
+
+    const chevron = document.createElement("span")
+    chevron.className = "dropdownChevron"
+    chevron.setAttribute("aria-hidden", "true")
+    shell.appendChild(select)
+    shell.appendChild(chevron)
+
+    row.appendChild(text)
+    row.appendChild(shell)
+    list.appendChild(row)
+    selectionControls.push({ mount, select })
+  }
+
+  const updateSaveState = () => {
+    const missing = selectionControls.filter(({ select }) => !normalizeOptionMountSelectionValue(select.value)).length
+    saveButton.disabled = missing > 0
+    if (hint) {
+      if (missing > 0) {
+        hint.textContent = `${missing} option mount${missing === 1 ? "" : "s"} still need a choice.`
+        hint.classList.add("error")
+      } else {
+        hint.textContent = "The ship JSON is not changed."
+        hint.classList.remove("error")
+      }
+    }
+  }
+
+  for (const { select } of selectionControls) {
+    select.onchange = updateSaveState
+  }
+
+  cancelButton.textContent = required ? "Cancel" : "Ask Later"
+  cancelButton.onclick = () => resolveOptionMountPrompt({ saved: false, canceled: true })
+  closeButton.onclick = () => resolveOptionMountPrompt({ saved: false, canceled: true })
+  saveButton.onclick = () => {
+    const missing = selectionControls.filter(({ select }) => !normalizeOptionMountSelectionValue(select.value)).length
+    if (missing > 0) {
+      updateSaveState()
+      selectionControls.find(({ select }) => !normalizeOptionMountSelectionValue(select.value))?.select?.focus?.()
+      return
+    }
+
+    for (const { mount, select } of selectionControls) {
+      setShipOptionMountSelection(ship, mount, select.value)
+    }
+
+    renderShipInfo()
+    renderShipCanvas()
+    updateOptionMountButton()
+    syncAssignDamageWindowStateForActiveShip()
+    if (ship === getActiveShipRecord()) {
+      setStatus(`Option mount choices saved for ${shipName}.`)
+    }
+    resolveOptionMountPrompt({ saved: true })
+  }
+
+  state.optionMountPromptShip = ship
+  state.optionMountPromptPromise = new Promise((resolve) => {
+    state.optionMountPromptResolver = resolve
+  })
+
+  updateSaveState()
+  overlay.classList.remove("hidden")
+  overlay.setAttribute("aria-hidden", "false")
+
+  try {
+    window.focus?.()
+  } catch {
+    // no-op
+  }
+
+  const firstMissing = selectionControls.find(({ select }) => !normalizeOptionMountSelectionValue(select.value))
+  ;(firstMissing?.select || selectionControls[0]?.select)?.focus?.()
+
+  return state.optionMountPromptPromise
+}
+
+async function ensureOptionMountSelectionsForShip(ship) {
+  if (areShipOptionMountSelectionsComplete(ship)) return true
+  const result = await promptForShipOptionMountSelections(ship, { required: true })
+  return result?.saved === true && areShipOptionMountSelectionsComplete(ship)
+}
+
+function scheduleOptionMountPromptForShip(ship) {
+  if (!ship || state.optionMountPromptPromise || state.shipRotationTimerId != null) return
+  if (areShipOptionMountSelectionsComplete(ship)) return
+
+  window.setTimeout(() => {
+    if (state.optionMountPromptPromise) return
+    if (state.shipRotationTimerId != null) return
+    if (getActiveShipRecord() !== ship) return
+    if (areShipOptionMountSelectionsComplete(ship)) return
+    promptForShipOptionMountSelections(ship, { auto: true }).catch(() => {
+      // no-op
+    })
+  }, 0)
+}
+
+function openOptionMountEditorForActiveShip() {
+  const ship = getActiveShipRecord()
+  if (!ship) {
+    setStatus("Load and select a ship before choosing option mounts.")
+    return
+  }
+  if (getShipOptionMountEntries(ship).length === 0) {
+    setStatus("The active ship has no option mounts.")
+    return
+  }
+  promptForShipOptionMountSelections(ship).catch((err) => {
+    setStatus(err?.message || "Failed to open option mount choices.")
+  })
+}
+
+function updateOptionMountButton() {
+  const btn = byId("btnOptionMounts")
+  if (!btn) return
+
+  const ship = getActiveShipRecord()
+  const mounts = getShipOptionMountEntries(ship)
+  const hasMounts = mounts.length > 0
+  const complete = hasMounts && areShipOptionMountSelectionsComplete(ship)
+
+  btn.disabled = !hasMounts
+  btn.classList.toggle("attentionButton", hasMounts && !complete)
+  btn.title = !ship
+    ? "Load a ship first"
+    : (!hasMounts
+      ? "The active ship has no option mounts"
+      : (complete ? "Change option mount choices for this game" : "Choose what each option mount counts as for this game"))
 }
 
 function getActiveShipRecord() {
@@ -828,6 +1355,7 @@ function ensureShipRuntimeDamageState(ship) {
       damagedShieldBoxOverlayPresetByShield: {},
       damagedArmorBoxOverlayPresetByGroup: {},
       damagedSsdBoxOverlayPresetByKey: {},
+      optionMountSelectionsById: {},
       markedDacCells: [],
       passedOverDacCells: [],
       activeDacCell: "",
@@ -857,6 +1385,17 @@ function ensureShipRuntimeDamageState(ship) {
   if (!ship.runtimeDamage.damagedSsdBoxOverlayPresetByKey || typeof ship.runtimeDamage.damagedSsdBoxOverlayPresetByKey !== "object") {
     ship.runtimeDamage.damagedSsdBoxOverlayPresetByKey = {}
   }
+  const normalizedOptionMountSelections = {}
+  if (ship.runtimeDamage.optionMountSelectionsById && typeof ship.runtimeDamage.optionMountSelectionsById === "object") {
+    for (const [rawId, rawSelection] of Object.entries(ship.runtimeDamage.optionMountSelectionsById)) {
+      const id = String(rawId || "").trim()
+      if (!id) continue
+      const selection = normalizeOptionMountSelectionRecord(rawSelection)
+      if (!selection) continue
+      normalizedOptionMountSelections[id] = selection
+    }
+  }
+  ship.runtimeDamage.optionMountSelectionsById = normalizedOptionMountSelections
   if (!Array.isArray(ship.runtimeDamage.markedDacCells)) {
     ship.runtimeDamage.markedDacCells = []
   } else {
@@ -880,6 +1419,133 @@ function ensureShipRuntimeDamageState(ship) {
   }
 
   return ship.runtimeDamage
+}
+
+function getShipOptionMountEntries(shipOrDoc) {
+  const doc = getShipDocument(shipOrDoc)
+  const ssd = doc?.ssd
+  if (!ssd || typeof ssd !== "object") return []
+
+  const out = []
+  for (const [ssdKey, entries] of Object.entries(ssd)) {
+    if (!Array.isArray(entries)) continue
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index]
+      if (!isOptionMountEntry(entry)) continue
+      const rect = parsePosRect(entry?.pos)
+      out.push({
+        id: buildOptionMountId(ssdKey, index),
+        ssdKey: String(ssdKey || "").trim(),
+        index,
+        rect,
+        type: String(entry?.type || "Option Mount").trim() || "Option Mount",
+        designation: String(entry?.designation || "").trim(),
+        arc: String(entry?.arc || "").trim(),
+        pos: String(entry?.pos || "").trim()
+      })
+    }
+  }
+  return out
+}
+
+function getShipOptionMountSelectionType(ship, optionMountId) {
+  if (!ship || typeof ship !== "object") return ""
+  const runtime = ensureShipRuntimeDamageState(ship)
+  const id = String(optionMountId || "").trim()
+  if (!id) return ""
+  return normalizeOptionMountSelectionValue(runtime.optionMountSelectionsById?.[id]?.type)
+}
+
+function setShipOptionMountSelection(ship, mount, selectedType) {
+  if (!ship || typeof ship !== "object" || !mount) return false
+  const type = normalizeOptionMountSelectionValue(selectedType)
+  if (!type) return false
+
+  const runtime = ensureShipRuntimeDamageState(ship)
+  const id = String(mount.id || "").trim()
+  if (!id) return false
+
+  runtime.optionMountSelectionsById[id] = {
+    type,
+    ssdKey: String(mount.ssdKey || "").trim(),
+    index: Math.max(0, normalizeInteger(mount.index, 0)),
+    designation: String(mount.designation || "").trim()
+  }
+  return true
+}
+
+function pruneShipOptionMountSelections(ship) {
+  if (!ship || typeof ship !== "object") return
+  const runtime = ensureShipRuntimeDamageState(ship)
+  const validIds = new Set(getShipOptionMountEntries(ship).map((mount) => mount.id))
+  for (const id of Object.keys(runtime.optionMountSelectionsById || {})) {
+    if (!validIds.has(id)) delete runtime.optionMountSelectionsById[id]
+  }
+}
+
+function areShipOptionMountSelectionsComplete(ship) {
+  const mounts = getShipOptionMountEntries(ship)
+  if (mounts.length === 0) return true
+  for (const mount of mounts) {
+    if (!isOptionMountSelectionAllowedForShip(ship, getShipOptionMountSelectionType(ship, mount.id))) return false
+  }
+  return true
+}
+
+function isOptionMountSelectionAllowedForShip(ship, value) {
+  const normalized = normalizeOptionMountSelectionValue(value)
+  if (!normalized) return false
+  if (normalized === OPTION_MOUNT_NONE_VALUE) return true
+
+  const wanted = normalizeLabelToken(normalized)
+  return getOptionMountChoiceValues(ship).some((choice) => normalizeLabelToken(choice) === wanted)
+}
+
+function formatOptionMountDisplayLabel(mount, index = -1) {
+  const designation = String(mount?.designation || "").trim()
+  const label = designation ? `Option Mount ${designation}` : `Option Mount ${Math.max(1, normalizeInteger(index, 0) + 1)}`
+  const arc = String(mount?.arc || "").trim()
+  return arc ? `${label} (${arc})` : label
+}
+
+function getShipOptionMountSummary(ship) {
+  const mounts = getShipOptionMountEntries(ship)
+  if (mounts.length === 0) return "None"
+
+  const missing = mounts.filter((mount) => !isOptionMountSelectionAllowedForShip(ship, getShipOptionMountSelectionType(ship, mount.id))).length
+  if (missing > 0) {
+    return `${mounts.length} option mount${mounts.length === 1 ? "" : "s"}; ${missing} not chosen`
+  }
+
+  const parts = []
+  for (let i = 0; i < mounts.length; i += 1) {
+    const mount = mounts[i]
+    const selected = getOptionMountSelectionLabel(getShipOptionMountSelectionType(ship, mount.id))
+    parts.push(`${formatOptionMountDisplayLabel(mount, i)}: ${selected}`)
+  }
+  return parts.join("; ")
+}
+
+function getOptionMountChoiceValues(ship) {
+  const out = []
+  const seen = new Set()
+  const add = (value) => {
+    const normalized = normalizeOptionMountSelectionValue(value)
+    if (!normalized || normalized === OPTION_MOUNT_NONE_VALUE) return
+    const key = normalizeLabelToken(normalized)
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    out.push(normalized)
+  }
+
+  const shipyardChoices = getShipyardBoxChoiceValues()
+  if (shipyardChoices.length > 0) {
+    for (const value of shipyardChoices) add(value)
+    return out
+  }
+
+  for (const value of OPTION_MOUNT_FALLBACK_CHOICES) add(value)
+  return out
 }
 
 function normalizeDamageOverlayIndexMap(value) {
@@ -1190,21 +1856,42 @@ function getShipAllDamagedArmorBoxRects(ship) {
   return out
 }
 
-function getShipSsdBoxEntriesByKey(doc, ssdKey) {
+function getShipSsdBoxEntriesByKey(doc, ssdKey, ship = null) {
   const key = String(ssdKey || "").trim()
   if (!key) return []
   const entries = Array.isArray(doc?.ssd?.[key]) ? doc.ssd[key] : []
   const normalizedKey = normalizeLabelToken(key)
   const parsed = []
-  for (const entry of entries) {
+  for (let sourceIndex = 0; sourceIndex < entries.length; sourceIndex += 1) {
+    const entry = entries[sourceIndex]
     const rect = parsePosRect(entry?.pos)
     if (!rect) continue
     const rank = Number(entry?.rank)
+    const sourceOrder = sourceIndex
+    const optionMount = isOptionMountEntry(entry)
+    const optionMountId = optionMount ? buildOptionMountId(key, sourceOrder) : ""
+    const optionMountSelection = optionMount && ship
+      ? getShipOptionMountSelectionType(ship, optionMountId)
+      : ""
+    const optionMountIgnored = optionMountSelection === OPTION_MOUNT_NONE_VALUE
+    const countsAsType = optionMount && optionMountSelection && !optionMountIgnored
+      ? optionMountSelection
+      : ""
+    const originalType = String(entry?.type || "").trim()
+    const displayType = optionMount
+      ? (optionMountIgnored ? OPTION_MOUNT_NONE_LABEL : (countsAsType || originalType || "Option Mount"))
+      : originalType
     parsed.push({
       rect,
       rank: Number.isFinite(rank) ? rank : null,
-      sourceOrder: parsed.length,
-      type: String(entry?.type || "").trim(),
+      sourceOrder,
+      type: displayType,
+      originalType,
+      countsAsType,
+      isOptionMount: optionMount,
+      optionMountId,
+      optionMountSelection,
+      optionMountIgnored,
       designation: String(entry?.designation || "").trim(),
       arc: String(entry?.arc || "").trim()
     })
@@ -1222,15 +1909,33 @@ function getShipSsdBoxEntriesByKey(doc, ssdKey) {
         })
         .map((entry, index) => ({
           index,
+          damageIndex: index,
+          damageSsdKey: key,
           rect: entry.rect,
           type: entry.type,
+          originalType: entry.originalType,
+          countsAsType: entry.countsAsType,
+          isOptionMount: entry.isOptionMount,
+          optionMountId: entry.optionMountId,
+          optionMountSelection: entry.optionMountSelection,
+          optionMountIgnored: entry.optionMountIgnored,
+          sourceOrder: entry.sourceOrder,
           designation: entry.designation,
           arc: entry.arc
         }))
     : parsed.map((entry, index) => ({
         index,
+        damageIndex: index,
+        damageSsdKey: key,
         rect: entry.rect,
         type: entry.type,
+        originalType: entry.originalType,
+        countsAsType: entry.countsAsType,
+        isOptionMount: entry.isOptionMount,
+        optionMountId: entry.optionMountId,
+        optionMountSelection: entry.optionMountSelection,
+        optionMountIgnored: entry.optionMountIgnored,
+        sourceOrder: entry.sourceOrder,
         designation: entry.designation,
         arc: entry.arc
       }))
@@ -1291,6 +1996,107 @@ function resolveSsdKeysFromSpec(doc, spec) {
   return []
 }
 
+function doesSsdKeyMatchSpec(ssdKey, spec) {
+  const key = normalizeLabelToken(ssdKey)
+  const wanted = normalizeLabelToken(spec)
+  if (!key || !wanted) return false
+  return key === wanted || key.includes(wanted)
+}
+
+function doesSsdEntryTypeMatchSpec(entry, spec) {
+  const wanted = normalizeLabelToken(spec)
+  if (!wanted || !entry) return false
+
+  if (entry.isOptionMount && !entry.countsAsType) return false
+
+  const tokens = [
+    entry.countsAsType,
+    entry.type,
+    entry.originalType
+  ].map((value) => normalizeLabelToken(value)).filter(Boolean)
+
+  const torpLikeSpec = /\btorp/.test(wanted)
+  for (const token of tokens) {
+    if (token === wanted || token.includes(wanted) || wanted.includes(token)) return true
+    if (torpLikeSpec && /\btorp/.test(token)) return true
+  }
+  return false
+}
+
+function isOptionMountEntryMatchForGroupSpec(entry, spec) {
+  if (!entry?.isOptionMount) return true
+  const category = getOptionMountWeaponCategory(entry.countsAsType)
+  if (!category) return false
+  const wanted = normalizeLabelToken(spec)
+  if (USER_SELECTABLE_WEAPON_GROUP_KEYS.has(wanted)) {
+    return category === wanted
+  }
+  return true
+}
+
+function getShipDamageCandidateGroupsForSpec(ship, spec) {
+  const doc = ship?.doc || null
+  const ssd = doc?.ssd
+  if (!ssd || typeof ssd !== "object") return []
+
+  const groups = []
+  const groupsByDamageKey = new Map()
+  const wanted = normalizeLabelToken(spec)
+  if (!wanted) return []
+
+  function addEntry(ssdKey, entry) {
+    const damageSsdKey = String(entry?.damageSsdKey || ssdKey || "").trim()
+    if (!damageSsdKey) return
+    const groupKey = normalizeLabelToken(damageSsdKey)
+    if (!groupKey) return
+
+    let group = groupsByDamageKey.get(groupKey)
+    if (!group) {
+      group = {
+        damageSsdKey,
+        displaySsdKey: String(ssdKey || damageSsdKey).trim(),
+        entries: []
+      }
+      groupsByDamageKey.set(groupKey, group)
+      groups.push(group)
+    }
+
+    const candidateEntry = {
+      ...entry,
+      displaySsdKey: String(ssdKey || damageSsdKey).trim()
+    }
+
+    const alreadyPresent = group.entries.some((candidate) => {
+      return normalizeInteger(candidate.damageIndex, -1) === normalizeInteger(entry.damageIndex, -2)
+    })
+    if (!alreadyPresent) group.entries.push(candidateEntry)
+  }
+
+  for (const rawKey of getShipSsdKeys(doc)) {
+    const ssdKey = String(rawKey || "").trim()
+    if (!ssdKey) continue
+    const keyMatched = doesSsdKeyMatchSpec(ssdKey, spec)
+    const entries = getShipSsdBoxEntriesByKey(doc, ssdKey, ship)
+    if (entries.length === 0) continue
+
+    for (const entry of entries) {
+      if (!entry) continue
+      if (entry.isOptionMount && !entry.countsAsType) continue
+      if (keyMatched) {
+        if (isOptionMountEntryMatchForGroupSpec(entry, spec)) {
+          addEntry(ssdKey, entry)
+        }
+        continue
+      }
+      if (doesSsdEntryTypeMatchSpec(entry, spec)) {
+        addEntry(ssdKey, entry)
+      }
+    }
+  }
+
+  return groups
+}
+
 function getShipDamagedSsdBoxIndexSet(ship, ssdKey) {
   const runtime = ensureShipRuntimeDamageState(ship)
   const key = normalizeLabelToken(ssdKey)
@@ -1339,7 +2145,7 @@ function getShipAllDamagedInternalBoxRects(ship) {
   for (const [normalizedKey, rawIndices] of Object.entries(damagedByKey)) {
     const actualKeys = getShipSsdKeys(doc).filter((key) => normalizeLabelToken(key) === normalizedKey)
     for (const actualKey of actualKeys) {
-      const entries = getShipSsdBoxEntriesByKey(doc, actualKey)
+      const entries = getShipSsdBoxEntriesByKey(doc, actualKey, ship)
       if (entries.length === 0) continue
       const seen = new Set()
       for (const rawIdx of Array.isArray(rawIndices) ? rawIndices : []) {
@@ -1392,6 +2198,60 @@ function formatSelectableWeaponEntryLabel(ssdKey, entry) {
     label += ` (${arc})`
   }
   return label
+}
+
+function getPromptSsdKeyForSelectableEntries(group, entries) {
+  const list = Array.isArray(entries) ? entries : []
+  for (const entry of list) {
+    const category = getOptionMountWeaponCategory(entry?.countsAsType)
+    if (category) return category
+  }
+  return String(group?.displaySsdKey || group?.damageSsdKey || "weapon").trim() || "weapon"
+}
+
+function isSelectableDamageCandidateGroup(group) {
+  const entries = Array.isArray(group?.entries) ? group.entries : []
+  const normalizedGroupKey = normalizeLabelToken(group?.displaySsdKey || group?.damageSsdKey)
+  return entries.some((entry) => {
+    if (!entry) return false
+    if (entry.isOptionMount) {
+      return !!getOptionMountWeaponCategory(entry.countsAsType)
+    }
+    return USER_SELECTABLE_WEAPON_GROUP_KEYS.has(normalizedGroupKey)
+  })
+}
+
+function getUndamagedDamageCandidateEntries(ship, group) {
+  const entries = Array.isArray(group?.entries) ? group.entries : []
+  return entries.filter((entry) => {
+    if (!entry) return false
+    const damageKey = String(entry.damageSsdKey || group?.damageSsdKey || "").trim()
+    const damageIndex = normalizeInteger(entry.damageIndex, entry.index)
+    return !getShipDamagedSsdBoxIndexSet(ship, damageKey).has(damageIndex)
+  })
+}
+
+function markDamageCandidateEntryOnShip(ship, group, entry, presetForNew) {
+  if (!ship || !entry) return null
+  const damageKey = String(entry.damageSsdKey || group?.damageSsdKey || "").trim()
+  if (!damageKey) return null
+  const damageIndex = normalizeInteger(entry.damageIndex, entry.index)
+  const damagedSet = getShipDamagedSsdBoxIndexSet(ship, damageKey)
+  damagedSet.add(damageIndex)
+  setShipDamagedSsdBoxIndices(ship, damageKey, Array.from(damagedSet), { presetForNew })
+
+  return {
+    chartCellLabel: "",
+    ssdKey: entry.displaySsdKey || group?.displaySsdKey || damageKey,
+    damageSsdKey: damageKey,
+    index: damageIndex,
+    rect: entry.rect,
+    type: entry.type,
+    designation: entry.designation,
+    arc: entry.arc,
+    isOptionMount: entry.isOptionMount === true,
+    optionMountId: String(entry.optionMountId || "")
+  }
 }
 
 async function promptForSelectableWeaponDamage(chartCellLabel, ssdKey, availableEntries) {
@@ -1595,57 +2455,65 @@ async function tryMarkFirstAvailableSsdBoxForSpecs(ship, chartCellLabel, specs) 
 
   const list = Array.isArray(specs) ? specs : []
   for (const spec of list) {
-    const actualKeys = resolveSsdKeysFromSpec(doc, spec)
-    for (const actualKey of actualKeys) {
-      const entries = getShipSsdBoxEntriesByKey(doc, actualKey)
-      if (entries.length === 0) continue
+    const candidateGroups = getShipDamageCandidateGroupsForSpec(ship, spec)
+    const selectableEntries = []
+    let selectablePromptGroup = null
+    for (const group of candidateGroups) {
+      if (!isSelectableDamageCandidateGroup(group)) continue
+      const availableEntries = getUndamagedDamageCandidateEntries(ship, group)
+      if (availableEntries.length === 0) continue
+      if (!selectablePromptGroup) selectablePromptGroup = group
+      selectableEntries.push(...availableEntries)
+    }
 
-      const damagedSet = getShipDamagedSsdBoxIndexSet(ship, actualKey)
-      const normalizedActualKey = normalizeLabelToken(actualKey)
-      if (USER_SELECTABLE_WEAPON_GROUP_KEYS.has(normalizedActualKey)) {
-        const availableEntries = entries.filter((entry) => entry && !damagedSet.has(entry.index))
-        if (availableEntries.length === 0) continue
-
-        const chosenEntry = await promptForSelectableWeaponDamage(chartCellLabel, actualKey, availableEntries)
-        if (chosenEntry?.skipSelection) {
-          // Allow phaser results to be skipped without canceling the rest of the allocation.
-          // For Any Weapon, this lets the resolver continue on to heavy/drone groups.
-          continue
-        }
-        if (!chosenEntry) {
-          return {
-            selectionCanceled: true,
-            chartCellLabel: String(chartCellLabel || ""),
-            ssdKey: actualKey,
-            error: "Weapon selection canceled."
-          }
-        }
-
-        damagedSet.add(chosenEntry.index)
-        setShipDamagedSsdBoxIndices(ship, actualKey, Array.from(damagedSet), { presetForNew })
+    if (selectableEntries.length > 0) {
+      const promptKey = getPromptSsdKeyForSelectableEntries(selectablePromptGroup, selectableEntries)
+      const chosenEntry = await promptForSelectableWeaponDamage(chartCellLabel, promptKey, selectableEntries)
+      if (chosenEntry?.skipSelection) {
+        // Allow phaser results to be skipped without canceling the rest of the allocation.
+        // For Any Weapon, this lets the resolver continue on to heavy/drone groups.
+        continue
+      }
+      if (!chosenEntry) {
         return {
+          selectionCanceled: true,
           chartCellLabel: String(chartCellLabel || ""),
-          ssdKey: actualKey,
-          index: chosenEntry.index,
-          rect: chosenEntry.rect,
-          type: chosenEntry.type,
-          designation: chosenEntry.designation,
-          arc: chosenEntry.arc
+          ssdKey: selectablePromptGroup?.displaySsdKey || selectablePromptGroup?.damageSsdKey || "",
+          error: "Weapon selection canceled."
         }
       }
 
+      const marked = markDamageCandidateEntryOnShip(ship, selectablePromptGroup, chosenEntry, presetForNew)
+      if (marked) {
+        marked.chartCellLabel = String(chartCellLabel || "")
+        return marked
+      }
+    }
+
+    for (const group of candidateGroups) {
+      if (isSelectableDamageCandidateGroup(group)) continue
+      const entries = Array.isArray(group?.entries) ? group.entries : []
+      if (entries.length === 0) continue
+
       for (const entry of entries) {
-        if (!entry || damagedSet.has(entry.index)) continue
-        damagedSet.add(entry.index)
-        setShipDamagedSsdBoxIndices(ship, actualKey, Array.from(damagedSet), { presetForNew })
+        if (!entry) continue
+        const damageKey = String(entry.damageSsdKey || group.damageSsdKey || "").trim()
+        const damageIndex = normalizeInteger(entry.damageIndex, entry.index)
+        const damagedSet = getShipDamagedSsdBoxIndexSet(ship, damageKey)
+        if (damagedSet.has(damageIndex)) continue
+        damagedSet.add(damageIndex)
+        setShipDamagedSsdBoxIndices(ship, damageKey, Array.from(damagedSet), { presetForNew })
         return {
           chartCellLabel: String(chartCellLabel || ""),
-          ssdKey: actualKey,
-          index: entry.index,
+          ssdKey: group.displaySsdKey || damageKey,
+          damageSsdKey: damageKey,
+          index: damageIndex,
           rect: entry.rect,
           type: entry.type,
           designation: entry.designation,
-          arc: entry.arc
+          arc: entry.arc,
+          isOptionMount: entry.isOptionMount === true,
+          optionMountId: String(entry.optionMountId || "")
         }
       }
     }
@@ -1657,6 +2525,317 @@ async function tryMarkFirstAvailableSsdBoxForSpecs(ship, chartCellLabel, specs) 
 function getDacRowForRoll(rollValue) {
   const wanted = String(clampInteger(rollValue, 2, 12))
   return DAMAGE_ALLOCATION_CHART.rows.find((row) => String(row?.dieRoll || "") === wanted) || null
+}
+
+function createPreviewDamageCandidateIndex(ship) {
+  const cache = new Map()
+  return {
+    getGroups(spec) {
+      const key = normalizeLabelToken(spec)
+      if (!key) return []
+      if (!cache.has(key)) {
+        const groups = getShipDamageCandidateGroupsForSpec(ship, spec).map((group) => {
+          const entries = Array.isArray(group?.entries) ? group.entries : []
+          return {
+            selectable: isSelectableDamageCandidateGroup(group),
+            entries: entries.map((entry) => ({
+              damageKey: normalizeLabelToken(entry?.damageSsdKey || group?.damageSsdKey),
+              damageIndex: normalizeInteger(entry?.damageIndex, entry?.index),
+              index: normalizeInteger(entry?.index, -1),
+              type: entry?.type,
+              designation: entry?.designation,
+              arc: entry?.arc
+            })).filter((entry) => entry.damageKey && entry.damageIndex >= 0)
+          }
+        }).filter((group) => group.entries.length > 0)
+        cache.set(key, groups)
+      }
+      return cache.get(key) || []
+    }
+  }
+}
+
+function createPreviewDamagedInternalSetMap(runtimeDamage) {
+  const damagedByKey = runtimeDamage?.damagedSsdBoxIndicesByKey
+  const out = new Map()
+  if (!damagedByKey || typeof damagedByKey !== "object") return out
+
+  for (const [rawKey, rawIndices] of Object.entries(damagedByKey)) {
+    const key = normalizeLabelToken(rawKey)
+    if (!key) continue
+    const set = new Set()
+    for (const rawIndex of Array.isArray(rawIndices) ? rawIndices : []) {
+      const index = normalizeInteger(rawIndex, -1)
+      if (index >= 0) set.add(index)
+    }
+    out.set(key, set)
+  }
+  return out
+}
+
+function clonePreviewDamagedInternalSetMap(source) {
+  const out = new Map()
+  if (!(source instanceof Map)) return out
+  for (const [key, set] of source.entries()) {
+    out.set(key, new Set(set instanceof Set ? set : []))
+  }
+  return out
+}
+
+function createPreviewDacSimulationState(baseDamagedByKey) {
+  return {
+    damagedByKey: clonePreviewDamagedInternalSetMap(baseDamagedByKey),
+    markedDacCells: new Set(),
+    destroyed: false
+  }
+}
+
+function markPreviewCandidateEntry(damagedByKey, entry) {
+  if (!(damagedByKey instanceof Map) || !entry?.damageKey || entry.damageIndex < 0) return null
+  let damagedSet = damagedByKey.get(entry.damageKey)
+  if (!(damagedSet instanceof Set)) {
+    damagedSet = new Set()
+    damagedByKey.set(entry.damageKey, damagedSet)
+  }
+  if (damagedSet.has(entry.damageIndex)) return null
+  damagedSet.add(entry.damageIndex)
+  return {
+    damageSsdKey: entry.damageKey,
+    index: entry.damageIndex,
+    type: entry.type,
+    designation: entry.designation,
+    arc: entry.arc
+  }
+}
+
+function tryMarkPreviewCandidateGroups(candidateGroups, damagedByKey, selectable) {
+  const groups = Array.isArray(candidateGroups) ? candidateGroups : []
+  for (const group of groups) {
+    if (!!group?.selectable !== selectable) continue
+    const entries = Array.isArray(group.entries) ? group.entries : []
+    for (const entry of entries) {
+      const hit = markPreviewCandidateEntry(damagedByKey, entry)
+      if (hit) return hit
+    }
+  }
+  return null
+}
+
+function tryMarkFirstAvailableSsdBoxForSpecsForPreview(ship, chartCellLabel, specs, candidateIndex = null, previewState = null) {
+  const doc = ship?.doc || null
+  if (!doc && !previewState) return null
+  const presetForNew = getDamageOverlayPreset()
+
+  const list = Array.isArray(specs) ? specs : []
+  for (const spec of list) {
+    const candidateGroups = candidateIndex && typeof candidateIndex.getGroups === "function"
+      ? candidateIndex.getGroups(spec)
+      : getShipDamageCandidateGroupsForSpec(ship, spec)
+
+    if (previewState?.damagedByKey instanceof Map) {
+      const damagedByKey = previewState.damagedByKey
+      const selectableHit = tryMarkPreviewCandidateGroups(candidateGroups, damagedByKey, true)
+      if (selectableHit) return selectableHit
+
+      const directHit = tryMarkPreviewCandidateGroups(candidateGroups, damagedByKey, false)
+      if (directHit) return directHit
+      continue
+    }
+
+    for (const group of candidateGroups) {
+      if (!isSelectableDamageCandidateGroup(group)) continue
+      const availableEntries = getUndamagedDamageCandidateEntries(ship, group)
+      if (availableEntries.length === 0) continue
+      return markDamageCandidateEntryOnShip(ship, group, availableEntries[0], presetForNew)
+    }
+
+    for (const group of candidateGroups) {
+      if (isSelectableDamageCandidateGroup(group)) continue
+      const entries = Array.isArray(group?.entries) ? group.entries : []
+      if (entries.length === 0) continue
+
+      for (const entry of entries) {
+        if (!entry) continue
+        const damageKey = String(entry.damageSsdKey || group.damageSsdKey || "").trim()
+        const damageIndex = normalizeInteger(entry.damageIndex, entry.index)
+        const damagedSet = getShipDamagedSsdBoxIndexSet(ship, damageKey)
+        if (damagedSet.has(damageIndex)) continue
+        damagedSet.add(damageIndex)
+        setShipDamagedSsdBoxIndices(ship, damageKey, Array.from(damagedSet), { presetForNew })
+        return {
+          chartCellLabel: String(chartCellLabel || ""),
+          ssdKey: group.displaySsdKey || damageKey,
+          damageSsdKey: damageKey,
+          index: damageIndex,
+          rect: entry.rect,
+          type: entry.type,
+          designation: entry.designation,
+          arc: entry.arc,
+          isOptionMount: entry.isOptionMount === true,
+          optionMountId: String(entry.optionMountId || "")
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+function applyPreviewInternalDacHit(ship, rollValue, candidateIndex = null, previewState = null) {
+  if (previewState) {
+    if (previewState.destroyed === true) return { ok: false, destroyed: true, error: "Ship already destroyed." }
+
+    const row = getDacRowForRoll(rollValue)
+    if (!row) return { ok: false, error: "Invalid DAC roll." }
+
+    for (let colIndex = 0; colIndex < DAMAGE_ALLOCATION_CHART.columns.length; colIndex += 1) {
+      const column = DAMAGE_ALLOCATION_CHART.columns[colIndex]
+      const chartCellLabel = String(row.cells?.[colIndex] || "")
+      const dacCellKey = `${row.dieRoll}:${column}`
+      const underlined = isUnderlinedDamageCell(row.dieRoll, column)
+
+      if (underlined && previewState.markedDacCells?.has(dacCellKey)) {
+        continue
+      }
+
+      const specs = getAssociatedSsdSpecsForDacLabel(chartCellLabel)
+      const hit = tryMarkFirstAvailableSsdBoxForSpecsForPreview(null, chartCellLabel, specs, candidateIndex, previewState)
+      if (!hit) continue
+
+      if (underlined) {
+        previewState.markedDacCells.add(dacCellKey)
+      }
+
+      return {
+        ok: true,
+        destroyed: false,
+        roll: normalizeInteger(row.dieRoll, 0),
+        column,
+        dacCellKey,
+        chartCellLabel,
+        underlined,
+        hit
+      }
+    }
+
+    previewState.destroyed = true
+    return {
+      ok: false,
+      destroyed: true,
+      roll: normalizeInteger(row.dieRoll, 0),
+      error: "DAC result moved past column M. Ship destroyed."
+    }
+  }
+
+  if (!ship) return { ok: false, error: "No ship selected." }
+  if (isShipDestroyed(ship)) return { ok: false, destroyed: true, error: "Ship already destroyed." }
+
+  const row = getDacRowForRoll(rollValue)
+  if (!row) return { ok: false, error: "Invalid DAC roll." }
+
+  for (let colIndex = 0; colIndex < DAMAGE_ALLOCATION_CHART.columns.length; colIndex += 1) {
+    const column = DAMAGE_ALLOCATION_CHART.columns[colIndex]
+    const chartCellLabel = String(row.cells?.[colIndex] || "")
+    const dacCellKey = `${row.dieRoll}:${column}`
+    const underlined = isUnderlinedDamageCell(row.dieRoll, column)
+    setShipActiveDacCell(ship, dacCellKey)
+
+    if (underlined && isDacCellMarkedOnShip(ship, dacCellKey)) {
+      markPassedOverDacCellOnShip(ship, dacCellKey)
+      continue
+    }
+
+    const specs = getAssociatedSsdSpecsForDacLabel(chartCellLabel)
+    const hit = tryMarkFirstAvailableSsdBoxForSpecsForPreview(ship, chartCellLabel, specs, candidateIndex)
+    if (!hit) {
+      markPassedOverDacCellOnShip(ship, dacCellKey)
+      continue
+    }
+
+    if (underlined) {
+      markDacCellOnShip(ship, dacCellKey)
+    }
+
+    return {
+      ok: true,
+      destroyed: false,
+      roll: normalizeInteger(row.dieRoll, 0),
+      column,
+      dacCellKey,
+      chartCellLabel,
+      underlined,
+      hit
+    }
+  }
+
+  setShipDestroyed(ship, true)
+  return {
+    ok: false,
+    destroyed: true,
+    roll: normalizeInteger(row.dieRoll, 0),
+    error: "DAC result moved past column M. Ship destroyed."
+  }
+}
+
+function applyPreviewAutomaticInternalDacHits(ship, internalHits, randomFn, candidateIndex = null, previewState = null) {
+  const total = Math.max(0, normalizeInteger(internalHits, 0))
+  if (previewState) {
+    if (total <= 0) {
+      return { attempted: 0, resolved: 0, destroyed: previewState.destroyed === true }
+    }
+
+    let resolved = 0
+    let destroyed = false
+    for (let i = 1; i <= total; i += 1) {
+      if (previewState.destroyed === true) {
+        destroyed = true
+        break
+      }
+
+      const rolled = rollTwoSixSidedDiceWithRandom(randomFn)
+      const result = applyPreviewInternalDacHit(null, rolled.total, candidateIndex, previewState)
+      resolved += 1
+      if (result?.destroyed) {
+        destroyed = true
+        break
+      }
+    }
+
+    return {
+      attempted: total,
+      resolved,
+      destroyed: destroyed || previewState.destroyed === true
+    }
+  }
+
+  if (!ship || total <= 0) {
+    return { attempted: 0, resolved: 0, destroyed: isShipDestroyed(ship) }
+  }
+
+  clearShipDacChartState(ship)
+
+  let resolved = 0
+  let destroyed = false
+  for (let i = 1; i <= total; i += 1) {
+    if (isShipDestroyed(ship)) {
+      destroyed = true
+      break
+    }
+
+    const rolled = rollTwoSixSidedDiceWithRandom(randomFn)
+    const result = applyPreviewInternalDacHit(ship, rolled.total, candidateIndex)
+    resolved += 1
+    if (result?.destroyed) {
+      destroyed = true
+      break
+    }
+  }
+
+  return {
+    attempted: total,
+    resolved,
+    destroyed: destroyed || isShipDestroyed(ship)
+  }
 }
 
 async function promptForManualInternalDacRoll(hitIndex, totalHits) {
@@ -2421,6 +3600,7 @@ function updateAssignDamageButton() {
   updateGamePersistenceButtons()
   updateManualDamageControls()
   updateRotateShipsButton()
+  updateOptionMountButton()
 }
 
 function updateRotateShipsButton() {
@@ -2851,6 +4031,8 @@ function activateLoadedShip(index, options = {}) {
   renderDamageAssignmentSummary()
   renderShipCanvas()
   syncAssignDamageWindowStateForActiveShip()
+  updateOptionMountButton()
+  scheduleOptionMountPromptForShip(ship)
 
   if (!quiet) {
     setStatus(formatShipStatusLine(ship, nextIndex, state.ships.length))
@@ -3007,6 +4189,215 @@ function getActiveShipDamageAssignment() {
 function getShipDamageAssignmentPreview(ship) {
   if (!ship || !ship.damageAssignmentPreview || typeof ship.damageAssignmentPreview !== "object") return null
   return ship.damageAssignmentPreview
+}
+
+function createShipDamageSimulationRecord(sourceShip, runtimeDamage = null) {
+  if (!sourceShip || typeof sourceShip !== "object") return null
+  const simShip = {
+    doc: sourceShip.doc || null,
+    shipLabel: String(sourceShip.shipLabel || sourceShip.jsonFile || "Ship"),
+    jsonFile: String(sourceShip.jsonFile || ""),
+    runtimeDamage: cloneJsonValue(runtimeDamage || sourceShip.runtimeDamage || {}, {})
+  }
+  ensureShipRuntimeDamageState(simShip)
+  return simShip
+}
+
+function getDestructionPreviewTrialCount(internals) {
+  const internalHits = Math.max(1, normalizeInteger(internals, 1))
+  const cappedByWork = Math.floor(DESTRUCTION_PREVIEW_MAX_DAC_HIT_SIMULATIONS / internalHits)
+  return clampInteger(
+    Math.min(DESTRUCTION_PREVIEW_MAX_TRIALS, cappedByWork),
+    DESTRUCTION_PREVIEW_MIN_TRIALS,
+    DESTRUCTION_PREVIEW_MAX_TRIALS
+  )
+}
+
+function formatDestructionChancePercent(chance) {
+  const value = Math.max(0, Math.min(1, Number(chance) || 0))
+  if (value <= 0) return "0%"
+  if (value >= 0.9995) return "100%"
+  const percent = value * 100
+  if (percent < 1) return `${percent.toFixed(1)}%`
+  if (percent < 10) return `${percent.toFixed(1)}%`
+  return `${Math.round(percent)}%`
+}
+
+function buildDestructionPreviewSeed(ship, payload, shieldResult, internals) {
+  const runtime = ship?.runtimeDamage && typeof ship.runtimeDamage === "object"
+    ? ship.runtimeDamage
+    : {}
+  const runtimeParts = [
+    runtime.damagedShieldBoxIndicesByShield,
+    runtime.damagedArmorBoxIndicesByGroup,
+    runtime.damagedSsdBoxIndicesByKey,
+    runtime.optionMountSelectionsById
+  ]
+
+  return JSON.stringify({
+    ship: String(ship?.shipLabel || ship?.jsonFile || ""),
+    totalDamage: normalizeInteger(payload?.totalDamage, 0),
+    shieldNumber: normalizeInteger(payload?.shieldNumber, 1),
+    internals: normalizeInteger(internals, 0),
+    shieldAbsorbed: normalizeInteger(shieldResult?.shieldAbsorbed, 0),
+    armorAbsorbed: normalizeInteger(shieldResult?.armorAbsorbed, 0),
+    runtimeParts
+  })
+}
+
+function buildAssignDamageDestructionPreview(ship, payload) {
+  if (!ship || typeof ship !== "object") {
+    return {
+      status: "unavailable",
+      text: "Destruction chance unavailable.",
+      detail: "No active ship is selected."
+    }
+  }
+
+  const rawTotalDamage = String(payload?.rawTotalDamage ?? payload?.totalDamage ?? "").trim()
+  const totalDamage = normalizeInteger(payload?.totalDamage, NaN)
+  if (!rawTotalDamage || !Number.isFinite(totalDamage) || totalDamage <= 0) {
+    return {
+      status: "empty",
+      text: "Destruction chance",
+      detail: "Enter damage to estimate the chance of destruction."
+    }
+  }
+
+  const shieldNumber = normalizeInteger(payload?.shieldNumber, 0)
+  if (!Number.isFinite(shieldNumber) || shieldNumber <= 0) {
+    return {
+      status: "unavailable",
+      text: "Destruction chance unavailable.",
+      detail: "Select a valid shield."
+    }
+  }
+
+  if (ship?.runtimeDamage?.shipDestroyed === true) {
+    return {
+      status: "destroyed",
+      chance: 1,
+      chancePercent: 100,
+      text: "Destruction chance: 100%",
+      detail: "This ship is already destroyed."
+    }
+  }
+
+  const baseShip = createShipDamageSimulationRecord(ship)
+  if (!baseShip || !baseShip.doc) {
+    return {
+      status: "unavailable",
+      text: "Destruction chance unavailable.",
+      detail: "No ship SSD data is loaded."
+    }
+  }
+
+  if (!areShipOptionMountSelectionsComplete(baseShip)) {
+    return {
+      status: "unavailable",
+      text: "Destruction chance unavailable.",
+      detail: "Choose option mount assignments first."
+    }
+  }
+
+  const shieldResult = applyShieldDamageToShip(baseShip, shieldNumber, totalDamage)
+  const internals = Math.max(0, normalizeInteger(shieldResult.internals, 0))
+  if (internals <= 0) {
+    return {
+      status: "ready",
+      chance: 0,
+      chancePercent: 0,
+      trials: 0,
+      internals,
+      text: "Destruction chance: 0%",
+      detail: "No internal hits get through shields or armor."
+    }
+  }
+
+  const trials = getDestructionPreviewTrialCount(internals)
+  const baseRuntime = cloneJsonValue(baseShip.runtimeDamage, {})
+  const candidateIndex = createPreviewDamageCandidateIndex(baseShip)
+  const baseDamagedByKey = createPreviewDamagedInternalSetMap(baseRuntime)
+  const random = createSeededRandom(buildDestructionPreviewSeed(ship, payload, shieldResult, internals))
+  let destroyedTrials = 0
+
+  for (let i = 0; i < trials; i += 1) {
+    const previewState = createPreviewDacSimulationState(baseDamagedByKey)
+    const result = applyPreviewAutomaticInternalDacHits(null, internals, random, candidateIndex, previewState)
+    if (result?.destroyed) destroyedTrials += 1
+  }
+
+  const chance = trials > 0 ? destroyedTrials / trials : 0
+  const chancePercent = chance * 100
+  return {
+    status: "ready",
+    chance,
+    chancePercent,
+    trials,
+    destroyedTrials,
+    internals,
+    text: `Destruction chance: ${formatDestructionChancePercent(chance)}`,
+    detail: `Estimated from ${trials.toLocaleString()} DAC trial${trials === 1 ? "" : "s"} after ${internals} internal hit${internals === 1 ? "" : "s"}.`
+  }
+}
+
+async function sendAssignDamageDestructionPreview(payload) {
+  if (!window.api || typeof window.api.setAssignDamageDestructionPreview !== "function") return
+  try {
+    await window.api.setAssignDamageDestructionPreview(payload && typeof payload === "object" ? payload : null)
+  } catch {
+    // If the assign damage window is closed or IPC is unavailable, ignore.
+  }
+}
+
+function queueAssignDamageDestructionPreview(payload) {
+  const requestId = state.assignDamageDestructionPreviewRequestId + 1
+  state.assignDamageDestructionPreviewRequestId = requestId
+
+  if (state.assignDamageDestructionPreviewTimerId != null) {
+    window.clearTimeout(state.assignDamageDestructionPreviewTimerId)
+    state.assignDamageDestructionPreviewTimerId = null
+  }
+
+  const requestedIndex = normalizeInteger(payload?.shipIndex, -1)
+  if (!Number.isInteger(requestedIndex) || requestedIndex < 0 || requestedIndex >= state.ships.length) {
+    void sendAssignDamageDestructionPreview({
+      requestId,
+      status: "unavailable",
+      text: "Destruction chance unavailable.",
+      detail: "No active ship is selected."
+    })
+    return
+  }
+
+  const rawTotalDamage = String(payload?.rawTotalDamage ?? payload?.totalDamage ?? "").trim()
+  const totalDamage = normalizeInteger(payload?.totalDamage, NaN)
+  if (!rawTotalDamage || !Number.isFinite(totalDamage) || totalDamage <= 0) {
+    void sendAssignDamageDestructionPreview({
+      requestId,
+      status: "empty",
+      text: "Destruction chance",
+      detail: "Enter damage to estimate the chance of destruction."
+    })
+    return
+  }
+
+  void sendAssignDamageDestructionPreview({
+    requestId,
+    status: "pending",
+    text: "Destruction chance",
+    detail: "Calculating estimate..."
+  })
+
+  state.assignDamageDestructionPreviewTimerId = window.setTimeout(() => {
+    state.assignDamageDestructionPreviewTimerId = null
+    if (requestId !== state.assignDamageDestructionPreviewRequestId) return
+
+    const ship = state.ships[requestedIndex]
+    const preview = buildAssignDamageDestructionPreview(ship, payload)
+    if (requestId !== state.assignDamageDestructionPreviewRequestId) return
+    void sendAssignDamageDestructionPreview({ requestId, ...preview })
+  }, DESTRUCTION_PREVIEW_DEBOUNCE_MS)
 }
 
 function buildAssignDamageWindowStateForActiveShip() {
@@ -3195,7 +4586,7 @@ function resetActiveShipDacDisplayState() {
   renderDamageAssignmentSummary()
 }
 
-function openAssignDamageModal() {
+async function openAssignDamageModal() {
   const ship = getActiveShipRecord()
   if (!ship) {
     setStatus("Load and select a ship before assigning damage.")
@@ -3204,6 +4595,12 @@ function openAssignDamageModal() {
 
   if (!window.api || typeof window.api.openAssignDamageWindow !== "function") {
     setStatus("Assign Damage window API is not available.")
+    return
+  }
+
+  const optionsReady = await ensureOptionMountSelectionsForShip(ship)
+  if (!optionsReady) {
+    setStatus("Choose option mount assignments before assigning damage.")
     return
   }
 
@@ -3361,6 +4758,12 @@ async function submitAssignDamage() {
     return
   }
 
+  const optionsReady = await ensureOptionMountSelectionsForShip(ship)
+  if (!optionsReady) {
+    setAssignDamageHintText("Choose option mount assignments before assigning damage.", true)
+    return
+  }
+
   ship.damageAssignment = buildDamageAssignment(ship, totalDamage, shieldNumber, selectedNonBearingPhasers, assignmentMode)
   if (shouldCloseAssignDamageWindowBeforeAllocation(ship.damageAssignment)) {
     await closeAssignDamageModal()
@@ -3418,6 +4821,13 @@ async function handleAssignDamageWindowSubmit(payload) {
     return
   }
   if (!Number.isFinite(shieldNumber) || shieldNumber <= 0) {
+    syncAssignDamageWindowStateForActiveShip()
+    return
+  }
+
+  const optionsReady = await ensureOptionMountSelectionsForShip(ship)
+  if (!optionsReady) {
+    setStatus("Choose option mount assignments before assigning damage.")
     syncAssignDamageWindowStateForActiveShip()
     return
   }
@@ -3483,6 +4893,7 @@ function handleAssignDamageWindowPreview(payload) {
   ship.damageAssignmentPreview = {
     nonBearingPhaserKeys: selectedKeys
   }
+  queueAssignDamageDestructionPreview(payload)
 
   if (requestedIndex === state.activeShipIndex) {
     renderShipCanvas()
@@ -3627,6 +5038,7 @@ function renderShipInfo() {
     ["Type", shipData.type || "—"],
     ["Turn Mode", shipData.turnMode || "—"],
     ["Movement Cost", shipData.movementCost || "—"],
+    ["Option Mounts", getShipOptionMountSummary(getActiveShipRecord())],
     ["JSON File", state.jsonPath || "—"],
     ["Image File", state.imagePath || "—"],
     ["Image Size", image ? `${image.width} × ${image.height}` : "—"],
@@ -3732,12 +5144,17 @@ function getManualDamageTargets(ship) {
     if (/^shield\s*#\s*\d+$/i.test(ssdKey)) continue
     if (/armou?r/i.test(ssdKey)) continue
 
-    const entries = getShipSsdBoxEntriesByKey(doc, ssdKey)
+    const entries = getShipSsdBoxEntriesByKey(doc, ssdKey, ship)
     for (const entry of entries) {
       if (!entry?.rect) continue
       targets.push({
         type: "internal",
         ssdKey,
+        boxType: String(entry.type || "").trim(),
+        designation: String(entry.designation || "").trim(),
+        arc: String(entry.arc || "").trim(),
+        isOptionMount: entry.isOptionMount === true,
+        optionMountId: String(entry.optionMountId || ""),
         index: normalizeInteger(entry.index, -1),
         rect: entry.rect
       })
@@ -3783,7 +5200,12 @@ function formatManualDamageTargetLabel(target) {
   if (target.type === "armor") {
     return `${String(target.armorKey || "Armor").trim() || "Armor"} box ${normalizeInteger(target.index, 0) + 1}`
   }
-  return `${String(target.ssdKey || "Internal").trim() || "Internal"} box ${normalizeInteger(target.index, 0) + 1}`
+  let label = String(target.boxType || target.ssdKey || "Internal").trim() || "Internal"
+  const designation = String(target.designation || "").trim()
+  if (designation && !label.endsWith(` ${designation}`)) {
+    label += ` ${designation}`
+  }
+  return `${label} box ${normalizeInteger(target.index, 0) + 1}`
 }
 
 function applyManualDamageEditToTarget(ship, target, mode) {
@@ -4558,6 +5980,9 @@ function init() {
   const btnAssignDamage = byId("btnAssignDamage")
   if (btnAssignDamage) btnAssignDamage.onclick = () => openAssignDamageModal()
 
+  const btnOptionMounts = byId("btnOptionMounts")
+  if (btnOptionMounts) btnOptionMounts.onclick = () => openOptionMountEditorForActiveShip()
+
   const btnSaveGame = byId("btnSaveGame")
   if (btnSaveGame) btnSaveGame.onclick = () => saveGame()
 
@@ -4626,6 +6051,11 @@ function init() {
     window.api.onAssignDamageWindowClosed(() => {
       state.assignDamageWindowOpen = false
       state.assignDamageWeaponPromptSyncPromise = null
+      state.assignDamageDestructionPreviewRequestId += 1
+      if (state.assignDamageDestructionPreviewTimerId != null) {
+        window.clearTimeout(state.assignDamageDestructionPreviewTimerId)
+        state.assignDamageDestructionPreviewTimerId = null
+      }
       if (state.manualDacPromptPromise) {
         resolveManualDacRollPrompt(null)
       }
@@ -4731,11 +6161,17 @@ function init() {
 
   loadStarholdSettings()
   loadRollsConfig()
+  loadShipyardDataConfig()
   loadAppVersion()
   syncAssignDamageWindowStateForActiveShip()
 
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return
+    if (state.optionMountPromptPromise) {
+      event.preventDefault()
+      resolveOptionMountPrompt({ saved: false, canceled: true })
+      return
+    }
     if (state.weaponSelectPromise) {
       event.preventDefault()
       cancelWeaponSelectionPrompt()
@@ -4765,4 +6201,3 @@ function init() {
 }
 
 init()
-

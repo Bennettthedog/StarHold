@@ -31,6 +31,35 @@ function setHint(text, isError = false) {
   el.classList.toggle("error", isError === true)
 }
 
+function setDestructionPreview(payload) {
+  const root = byId("assignDestructionChance")
+  if (!root) return
+
+  if (!payload || typeof payload !== "object") {
+    root.classList.add("hidden")
+    root.classList.remove("pending", "danger")
+    return
+  }
+
+  const text = String(payload.text || "").trim()
+  const detail = String(payload.detail || "").trim()
+  if (!text && !detail) {
+    root.classList.add("hidden")
+    root.classList.remove("pending", "danger")
+    return
+  }
+
+  const textEl = byId("assignDestructionChanceText")
+  const detailEl = byId("assignDestructionChanceDetail")
+  if (textEl) textEl.textContent = text || "Destruction chance"
+  if (detailEl) detailEl.textContent = detail
+
+  const chancePercent = Number(payload.chancePercent)
+  root.classList.remove("hidden")
+  root.classList.toggle("pending", String(payload.status || "") === "pending")
+  root.classList.toggle("danger", Number.isFinite(chancePercent) && chancePercent >= 50)
+}
+
 function setControlsDisabled(disabled) {
   const ids = [
     "assignTotalDamage",
@@ -500,6 +529,10 @@ function renderPhaserList(phasers, selectedKeys) {
     checkbox.type = "checkbox"
     checkbox.value = String(phaser?.key || "")
     checkbox.checked = selected.has(String(phaser?.key || ""))
+    checkbox.addEventListener("change", () => {
+      updatePhaserDropdownSummary()
+      sendPreviewSelection()
+    })
 
     const text = document.createElement("div")
     text.className = "phaserChoiceLabel"
@@ -537,8 +570,16 @@ function sendPreviewSelection() {
   if (ctx.available !== true) return
   if (!window.api || typeof window.api.previewAssignDamageWindowSelection !== "function") return
 
+  const totalDamageInput = byId("assignTotalDamage")
+  const shieldSelect = byId("assignShieldNumber")
+  const modeSelect = byId("assignDamageMode")
+
   window.api.previewAssignDamageWindowSelection({
     shipIndex: normalizeInteger(ctx.shipIndex, -1),
+    rawTotalDamage: String(totalDamageInput?.value || ""),
+    totalDamage: normalizeInteger(totalDamageInput?.value, NaN),
+    shieldNumber: normalizeInteger(shieldSelect?.value, 0),
+    assignmentMode: normalizeDamageMode(modeSelect?.value),
     selectedNonBearingPhaserKeys: collectSelectedPhaserKeys()
   })
 }
@@ -564,6 +605,11 @@ function applyContext(context) {
 
   const disabled = ctx.available !== true
   setControlsDisabled(disabled)
+  if (disabled) {
+    setDestructionPreview(null)
+  } else {
+    sendPreviewSelection()
+  }
 
   if (ctx.hintText) {
     setHint(ctx.hintText, !!ctx.hintError)
@@ -654,10 +700,17 @@ function init() {
 
   const totalDamageInput = byId("assignTotalDamage")
   if (totalDamageInput) {
+    totalDamageInput.addEventListener("input", () => sendPreviewSelection())
     totalDamageInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") submitAssignDamage()
     })
   }
+
+  const shieldSelect = byId("assignShieldNumber")
+  if (shieldSelect) shieldSelect.addEventListener("change", () => sendPreviewSelection())
+
+  const modeSelect = byId("assignDamageMode")
+  if (modeSelect) modeSelect.addEventListener("change", () => sendPreviewSelection())
 
   const modePromptOverlay = byId("assignModePromptOverlay")
   if (modePromptOverlay) {
@@ -754,6 +807,12 @@ function init() {
   if (window.api && typeof window.api.onAssignDamageWindowState === "function") {
     window.api.onAssignDamageWindowState((payload) => {
       applyContext(payload)
+    })
+  }
+
+  if (window.api && typeof window.api.onAssignDamageDestructionPreview === "function") {
+    window.api.onAssignDamageDestructionPreview((payload) => {
+      setDestructionPreview(payload)
     })
   }
 

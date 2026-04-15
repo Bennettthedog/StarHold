@@ -41,6 +41,7 @@
             </div>
           </label>
           <button id="btnAssignDamage">Assign Damage</button>
+          <button id="btnOptionMounts" class="secondaryButton" type="button" disabled>Option Mounts</button>
           <button id="btnSaveGame" class="secondaryButton" type="button" disabled>Save Game</button>
           <button id="btnLoadGame" class="secondaryButton" type="button">Load Game</button>
           <button id="btnOpenShip">Open SuperLuminal Ship</button>
@@ -80,6 +81,24 @@
           <div id="automaticDacAudit" class="dacAuditPanel hidden"></div>
         </section>
       </main>
+    </div>
+
+    <div id="optionMountOverlay" class="modalOverlay hidden" aria-hidden="true">
+      <div class="modalCard optionMountCard">
+        <div class="modalHeader">
+          <div class="modalTitle">Option Mounts</div>
+          <button id="btnOptionMountClose" class="iconButton modalCloseBtn" type="button" aria-label="Close option mount choices">&times;</button>
+        </div>
+        <div class="modalBody optionMountBody">
+          <div id="optionMountLead" class="assignModePromptLead">Choose what each option mount counts as for this game.</div>
+          <div id="optionMountList" class="optionMountList"></div>
+          <div id="optionMountHint" class="modalHint">The ship JSON is not changed.</div>
+        </div>
+        <div class="modalActions assignModePromptActions optionMountActions">
+          <button id="btnOptionMountCancel" class="secondaryButton" type="button">Ask Later</button>
+          <button id="btnOptionMountSave" type="button">Save Choices</button>
+        </div>
+      </div>
     </div>
 
     <div id="weaponSelectOverlay" class="modalOverlay hidden" aria-hidden="true">
