@@ -24,18 +24,20 @@
           <button id="btnManualMarkDamage" class="secondaryButton" type="button">Mark Damage</button>
           <button id="btnManualRemoveDamage" class="secondaryButton" type="button">Remove Damage</button>
           <button id="btnZoomSection" class="secondaryButton" type="button">Zoom Section</button>
-          <button id="btnResetZoom" class="secondaryButton" type="button">Reset Zoom</button>
+          <button id="btnResetZoom" class="secondaryButton hidden" type="button">Reset Zoom</button>
+          <button id="btnToggleDamageChart" class="secondaryButton" type="button" aria-expanded="true" aria-controls="damageChartWrap">Minimize DAC</button>
           <label class="toolbarDamageColorField" for="damageColorSelect">
             <span class="toolbarDamageColorLabel">Damage Color</span>
             <div class="selectFieldShell">
               <select id="damageColorSelect" class="toolbarDamageColorSelect" aria-label="Damage overlay color">
-                <option value="classic">Classic</option>
-                <option value="crimson">Crimson</option>
+                <option value="crimson">Red</option>
                 <option value="orange">Orange</option>
-                <option value="gold">Gold</option>
-                <option value="emerald">Emerald</option>
+                <option value="gold">Yellow</option>
+                <option value="emerald">Green</option>
                 <option value="cyan">Cyan</option>
-                <option value="violet">Violet</option>
+                <option value="violet">Purple</option>
+                <option value="black">Black</option>
+                <option value="classic">Troubleshooting Color</option>
               </select>
               <span class="dropdownChevron" aria-hidden="true"></span>
             </div>
@@ -72,10 +74,12 @@
 
         <section class="panel chartPanel">
           <div class="panelHeader">
-            <div class="panelTitle">Damage Allocation Chart</div>
-            <div class="panelHint">Static reference table</div>
+            <div>
+              <div class="panelTitle">Damage Allocation Chart</div>
+              <div id="damageChartHint" class="panelHint">Static reference table</div>
+            </div>
           </div>
-          <div class="tableWrap">
+          <div id="damageChartWrap" class="tableWrap">
             <table id="damageChartTable" class="damageTable"></table>
           </div>
           <div id="automaticDacAudit" class="dacAuditPanel hidden"></div>

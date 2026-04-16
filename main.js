@@ -22,30 +22,55 @@ const STARHOLD_SAVE_FILTERS = [
   { name: "StarHold Save", extensions: ["json"] }
 ]
 
-function getShipyardDataCandidatePaths() {
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "Shipyard", "Shipyard", "Data.json"),
-    path.resolve(process.cwd(), "Shipyard", "Shipyard", "Data.json"),
-    path.resolve(process.cwd(), "..", "Shipyard", "Shipyard", "Data.json"),
-    path.resolve(__dirname, "Data", "ShipyardData.json")
-  ]
-  return Array.from(new Set(candidates))
+function uniquePaths(paths) {
+  return Array.from(new Set(paths.filter(Boolean)))
 }
 
-async function readShipyardDataConfig() {
+function getSharedDataCandidatePaths(...segments) {
+  const relativePath = path.join("Data", ...segments)
+  const candidates = []
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, relativePath))
+  }
+  candidates.push(
+    path.resolve(__dirname, "..", "..", relativePath),
+    path.resolve(process.cwd(), relativePath),
+    path.resolve(process.cwd(), "..", "..", relativePath),
+    path.resolve(app.getAppPath(), "..", "..", relativePath),
+    path.resolve(__dirname, relativePath)
+  )
+  return uniquePaths(candidates)
+}
+
+async function readJsonFromCandidatePaths(label, candidatePaths) {
   const failures = []
-  for (const filePath of getShipyardDataCandidatePaths()) {
+  for (const filePath of candidatePaths) {
     try {
       const text = await fs.readFile(filePath, "utf-8")
       return {
         filePath,
-        dataConfig: JSON.parse(text)
+        data: JSON.parse(text)
       }
     } catch (err) {
       failures.push(`${filePath}: ${err?.message || "failed to read"}`)
     }
   }
-  throw new Error(`Failed to load Shipyard Data.json.\n${failures.join("\n")}`)
+  throw new Error(`Failed to load ${label}.\n${failures.join("\n")}`)
+}
+
+function getShipyardDataCandidatePaths() {
+  return uniquePaths([
+    ...getSharedDataCandidatePaths("Shipyard", "Data.json"),
+    path.resolve(__dirname, "..", "..", "Shipyard", "Shipyard", "Data.json"),
+    path.resolve(process.cwd(), "Shipyard", "Shipyard", "Data.json"),
+    path.resolve(process.cwd(), "..", "Shipyard", "Shipyard", "Data.json"),
+    path.resolve(__dirname, "Data", "ShipyardData.json")
+  ])
+}
+
+async function readShipyardDataConfig() {
+  const { filePath, data } = await readJsonFromCandidatePaths("Shipyard Data.json", getShipyardDataCandidatePaths())
+  return { filePath, dataConfig: data }
 }
 
 function sendToMainWindow(channel, payload = {}) {
@@ -390,10 +415,11 @@ ipcMain.handle("starhold:openSuperluminalShip", async () => {
 
 ipcMain.handle("starhold:getRollsConfig", async () => {
   try {
-    const filePath = path.join(__dirname, "Data", "Rolls.json")
-    const text = await fs.readFile(filePath, "utf-8")
-    const rollsConfig = JSON.parse(text)
-    return { ok: true, rollsConfig }
+    const { data: rollsConfig, filePath } = await readJsonFromCandidatePaths(
+      "StarHold Rolls.json",
+      getSharedDataCandidatePaths("StarHold", "Rolls.json")
+    )
+    return { ok: true, rollsConfig, filePath }
   } catch (err) {
     return { ok: false, error: err?.message || "Failed to load Rolls.json." }
   }

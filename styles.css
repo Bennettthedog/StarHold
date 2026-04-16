@@ -257,6 +257,17 @@ button:disabled:hover {
   grid-template-columns: minmax(460px, 54%) minmax(360px, 1fr);
   gap: 12px;
   padding: 0 12px 12px;
+  position: relative;
+}
+
+.layout.chartMinimized {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.layout.chartMinimized .shipPanel {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
 }
 
 .panel {
@@ -447,6 +458,18 @@ button:disabled:hover {
 
 .chartPanel {
   min-width: 0;
+}
+
+.layout.chartMinimized .chartPanel {
+  display: none;
+}
+
+.chartPanel.chartMinimized .tableWrap {
+  display: none;
+}
+
+.chartPanel.chartMinimized .dacAuditPanel {
+  display: none;
 }
 
 .damageAssignmentSummary {

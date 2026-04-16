@@ -129,13 +129,40 @@ const DAC_LABEL_FALLBACK_SSD_KEYS = {
   "trans": ["Transporter"]
 }
 
+const EXTERNAL_DAMAGE_BOX_FALLBACK_KEYS = new Set([
+  "crew units",
+  "admin shuttles",
+  "boarding parties",
+  "probes ammo",
+  "transporter bombs",
+  "transporter dummies",
+  "nuclear space mine",
+  "high energy turn bonus",
+  "break down",
+  "pseudo plasma torpedo",
+  "drone a ammo",
+  "drone b ammo",
+  "drone c ammo",
+  "drone d ammo",
+  "drone e ammo",
+  "drone f ammo",
+  "drone g ammo",
+  "drone h ammo",
+  "fighter",
+  "deck crew",
+  "uim",
+  "cloak",
+  "derfacs"
+])
+
 const RANK_ORDERED_SSD_KEYS = new Set(["sensor", "scanner", "damage control"])
 const USER_SELECTABLE_WEAPON_GROUP_KEYS = new Set(["phaser", "heavy", "drone"])
 const WEAPON_SELECTION_SKIP_TOKEN = "__STARHOLD_WEAPON_SKIP__"
 const DESTRUCTION_PREVIEW_DEBOUNCE_MS = 150
-const DESTRUCTION_PREVIEW_MAX_TRIALS = 250
-const DESTRUCTION_PREVIEW_MIN_TRIALS = 100
-const DESTRUCTION_PREVIEW_MAX_DAC_HIT_SIMULATIONS = 15000
+const DESTRUCTION_PREVIEW_MAX_TRIALS = 120
+const DESTRUCTION_PREVIEW_MIN_TRIALS = 40
+const DESTRUCTION_PREVIEW_MAX_DAC_HIT_SIMULATIONS = 6000
+const DESTRUCTION_PREVIEW_CHUNK_MS = 8
 const OPTION_MOUNT_TYPE_KEY = "optionmount"
 const OPTION_MOUNT_NONE_VALUE = "__STARHOLD_OPTION_MOUNT_NONE__"
 const OPTION_MOUNT_NONE_LABEL = "No box mounted"
@@ -240,7 +267,7 @@ for (let i = 0; i < DUPLICATE_SHIP_MARKER_COLORS.length; i += 1) {
 
 const DAMAGE_OVERLAY_PRESETS = Object.freeze({
   classic: {
-    label: "Classic",
+    label: "Troubleshooting Color",
     shield: {
       stroke: "rgba(255, 74, 74, 0.98)",
       fill: "rgba(255, 48, 48, 0.34)",
@@ -258,7 +285,7 @@ const DAMAGE_OVERLAY_PRESETS = Object.freeze({
     }
   },
   crimson: {
-    label: "Crimson",
+    label: "Red",
     shield: {
       stroke: "rgba(255, 74, 74, 0.98)",
       fill: "rgba(255, 56, 56, 0.34)",
@@ -294,7 +321,7 @@ const DAMAGE_OVERLAY_PRESETS = Object.freeze({
     }
   },
   gold: {
-    label: "Gold",
+    label: "Yellow",
     shield: {
       stroke: "rgba(255, 210, 76, 0.98)",
       fill: "rgba(255, 198, 62, 0.34)",
@@ -312,7 +339,7 @@ const DAMAGE_OVERLAY_PRESETS = Object.freeze({
     }
   },
   emerald: {
-    label: "Emerald",
+    label: "Green",
     shield: {
       stroke: "rgba(84, 218, 122, 0.98)",
       fill: "rgba(74, 206, 112, 0.34)",
@@ -348,7 +375,7 @@ const DAMAGE_OVERLAY_PRESETS = Object.freeze({
     }
   },
   violet: {
-    label: "Violet",
+    label: "Purple",
     shield: {
       stroke: "rgba(170, 120, 248, 0.98)",
       fill: "rgba(158, 108, 238, 0.34)",
@@ -364,10 +391,29 @@ const DAMAGE_OVERLAY_PRESETS = Object.freeze({
       fill: "rgba(124, 84, 198, 0.28)",
       shadow: "rgba(124, 84, 198, 0.36)"
     }
+  },
+  black: {
+    label: "Black",
+    shield: {
+      stroke: "rgba(10, 10, 12, 0.98)",
+      fill: "rgba(0, 0, 0, 0.34)",
+      shadow: "rgba(0, 0, 0, 0.48)"
+    },
+    armor: {
+      stroke: "rgba(30, 30, 34, 0.98)",
+      fill: "rgba(0, 0, 0, 0.3)",
+      shadow: "rgba(0, 0, 0, 0.42)"
+    },
+    internal: {
+      stroke: "rgba(48, 48, 54, 0.98)",
+      fill: "rgba(0, 0, 0, 0.28)",
+      shadow: "rgba(0, 0, 0, 0.36)"
+    }
   }
 })
 const DEFAULT_DAMAGE_OVERLAY_PRESET = "classic"
 const DAMAGE_OVERLAY_STORAGE_KEY = "starhold.damageOverlayPreset"
+const DAMAGE_CHART_MINIMIZED_STORAGE_KEY = "starhold.damageChartMinimized"
 const STARHOLD_SAVE_SCHEMA = "starhold.game"
 const STARHOLD_SAVE_VERSION = 1
 
@@ -386,6 +432,10 @@ const state = {
   shipyardDataConfig: null,
   shipyardDataPath: "",
   shipyardDataLoadPromise: null,
+  shipyardInternalDamageSpecKeySet: new Set(),
+  shipyardExternalDamageBoxNameKeySet: new Set(),
+  shipyardHeavyDamageSpecKeySet: new Set(),
+  shipyardDroneDamageSpecKeySet: new Set(),
   rollsLabelEntriesByChartLabel: new Map(),
   rollsLabelEntriesByLabel: new Map(),
   manualDacPromptPromise: null,
@@ -405,6 +455,7 @@ const state = {
   zoomSectionMode: false,
   zoomDrag: null,
   damageOverlayPreset: DEFAULT_DAMAGE_OVERLAY_PRESET,
+  damageChartMinimized: false,
   appVersion: "",
   optionMountPromptPromise: null,
   optionMountPromptResolver: null,
@@ -579,6 +630,7 @@ function setRollsConfig(rollsConfig) {
 function setShipyardDataConfig(dataConfig, filePath = "") {
   state.shipyardDataConfig = dataConfig && typeof dataConfig === "object" ? dataConfig : null
   state.shipyardDataPath = String(filePath || "").trim()
+  rebuildShipyardDamageBoxKeySets()
 }
 
 function loadShipyardDataConfig() {
@@ -629,6 +681,175 @@ function getShipyardBoxChoiceValues() {
     if (name) out.push(name)
   }
 
+  return out
+}
+
+function getShipyardBoxEntries() {
+  const sections = Array.isArray(state.shipyardDataConfig?.sections)
+    ? state.shipyardDataConfig.sections
+    : []
+  const boxesSection = sections.find((section) => normalizeLabelToken(section?.label) === "boxes")
+  return Array.isArray(boxesSection?.entries) ? boxesSection.entries : []
+}
+
+function getShipyardEntryNameKeys(entry) {
+  if (!entry || typeof entry !== "object") return []
+  const rawNames = [
+    entry.name,
+    ...(Array.isArray(entry["Other Names"]) ? entry["Other Names"] : [])
+  ]
+  return rawNames.map((value) => normalizeLabelToken(value)).filter(Boolean)
+}
+
+function isShipyardEntryExternal(entry) {
+  const types = Array.isArray(entry?.types) ? entry.types : []
+  return types.some((type) => normalizeLabelToken(type) === "external")
+}
+
+function rebuildShipyardDamageBoxKeySets() {
+  const external = new Set()
+  const internal = new Set()
+  const heavy = new Set(["heavy"])
+  const drone = new Set(["drone"])
+  for (const entry of getShipyardBoxEntries()) {
+    const nameKeys = getShipyardEntryNameKeys(entry)
+    const typeKeys = (Array.isArray(entry?.types) ? entry.types : [])
+      .map((type) => normalizeLabelToken(type))
+      .filter(Boolean)
+    if (isShipyardEntryExternal(entry)) {
+      for (const key of nameKeys) external.add(key)
+    } else {
+      for (const key of nameKeys) internal.add(key)
+      for (const typeKey of typeKeys) {
+        if (typeKey && typeKey !== "external") internal.add(typeKey)
+      }
+    }
+
+    if (typeKeys.includes("heavy")) {
+      for (const key of nameKeys) heavy.add(key)
+    }
+    if (typeKeys.includes("drone")) {
+      for (const key of nameKeys) drone.add(key)
+    }
+  }
+  state.shipyardExternalDamageBoxNameKeySet = external
+  state.shipyardInternalDamageSpecKeySet = internal
+  state.shipyardHeavyDamageSpecKeySet = heavy
+  state.shipyardDroneDamageSpecKeySet = drone
+}
+
+function getShipyardExternalDamageBoxNameKeySet() {
+  return state.shipyardExternalDamageBoxNameKeySet instanceof Set
+    ? state.shipyardExternalDamageBoxNameKeySet
+    : new Set()
+}
+
+function getShipyardInternalDamageSpecKeySet() {
+  return state.shipyardInternalDamageSpecKeySet instanceof Set
+    ? state.shipyardInternalDamageSpecKeySet
+    : new Set()
+}
+
+function getShipyardWeaponDamageSpecKeySet(category) {
+  const key = normalizeLabelToken(category)
+  if (key === "heavy") {
+    return state.shipyardHeavyDamageSpecKeySet instanceof Set
+      ? state.shipyardHeavyDamageSpecKeySet
+      : new Set()
+  }
+  if (key === "drone") {
+    return state.shipyardDroneDamageSpecKeySet instanceof Set
+      ? state.shipyardDroneDamageSpecKeySet
+      : new Set()
+  }
+  return new Set()
+}
+
+function isExternalDamageBoxNameKey(key) {
+  const normalized = normalizeLabelToken(key)
+  if (!normalized) return false
+  if (/^shield\s*#\s*\d+$/.test(normalized)) return true
+  if (getShipyardExternalDamageBoxNameKeySet().has(normalized)) return true
+  return EXTERNAL_DAMAGE_BOX_FALLBACK_KEYS.has(normalized)
+}
+
+function isInternalDamageSpecValue(value) {
+  const key = normalizeLabelToken(value)
+  if (!key || isExternalDamageBoxNameKey(key)) return false
+  if (USER_SELECTABLE_WEAPON_GROUP_KEYS.has(key)) return true
+
+  const shipyardInternalKeys = getShipyardInternalDamageSpecKeySet()
+  if (shipyardInternalKeys.size > 0) return shipyardInternalKeys.has(key)
+  return true
+}
+
+function isInternalDamageCandidateEntry(ssdKey, entry) {
+  if (!entry) return false
+
+  const damageKey = normalizeLabelToken(entry.damageSsdKey || ssdKey)
+  const typeKey = normalizeLabelToken(entry.countsAsType || entry.type || entry.originalType)
+  if (isExternalDamageBoxNameKey(damageKey) || isExternalDamageBoxNameKey(typeKey)) return false
+
+  return (
+    isInternalDamageSpecValue(entry.countsAsType) ||
+    isInternalDamageSpecValue(entry.type) ||
+    isInternalDamageSpecValue(entry.originalType) ||
+    isInternalDamageSpecValue(entry.damageSsdKey) ||
+    isInternalDamageSpecValue(ssdKey)
+  )
+}
+
+function isPhaserDamageSpecValue(value) {
+  const key = normalizeLabelToken(value)
+  return key === "phaser" || key.startsWith("phaser ")
+}
+
+function isDamageSpecWeaponCategoryValue(value, category) {
+  const key = normalizeLabelToken(value)
+  const categoryKey = normalizeLabelToken(category)
+  if (!key || !categoryKey) return false
+  if (categoryKey === "phaser") return isPhaserDamageSpecValue(key)
+  if (categoryKey === "drone") {
+    return key === "drone" || key === "add" || key.includes("drone") || getShipyardWeaponDamageSpecKeySet("drone").has(key)
+  }
+  if (categoryKey === "heavy") {
+    return key === "heavy" || OPTION_MOUNT_HEAVY_WEAPON_TYPE_KEYS.has(key) || /\btorp/.test(key) || getShipyardWeaponDamageSpecKeySet("heavy").has(key)
+  }
+  return false
+}
+
+function getDamageSpecWeaponCategories(value) {
+  const categories = []
+  for (const category of USER_SELECTABLE_WEAPON_GROUP_KEYS) {
+    if (isDamageSpecWeaponCategoryValue(value, category)) categories.push(category)
+  }
+  return categories
+}
+
+function normalizeDamageSpecGroupValue(value) {
+  const raw = String(value || "").replace(/\s+/g, " ").trim()
+  if (!raw) return ""
+  if (isExternalDamageBoxNameKey(raw)) return raw
+  if (isPhaserDamageSpecValue(raw)) return "phaser"
+  const categories = getDamageSpecWeaponCategories(raw)
+  return categories.length === 1 ? categories[0] : raw
+}
+
+function isAnyWeaponDamageLabel(value) {
+  return normalizeLabelToken(value) === "any weapon"
+}
+
+function filterInternalDamageSpecs(specs) {
+  const list = Array.isArray(specs) ? specs : []
+  const out = []
+  const seen = new Set()
+  for (const spec of list) {
+    const normalized = normalizeDamageSpecGroupValue(spec)
+    const key = normalizeLabelToken(normalized)
+    if (!key || seen.has(key) || !isInternalDamageSpecValue(normalized)) continue
+    seen.add(key)
+    out.push(normalized)
+  }
   return out
 }
 
@@ -877,7 +1098,7 @@ function coerceOptionMountPromptValue(rawValue, choices) {
 }
 
 function fallbackPromptForShipOptionMountSelections(ship) {
-  const mounts = getShipOptionMountEntries(ship)
+  const mounts = getShipOptionMountEntriesForPrompt(ship)
   if (mounts.length === 0) return Promise.resolve({ saved: true, skipped: true })
 
   if (typeof window.prompt !== "function") {
@@ -918,7 +1139,7 @@ async function promptForShipOptionMountSelections(ship, options = {}) {
   }
 
   pruneShipOptionMountSelections(ship)
-  const mounts = getShipOptionMountEntries(ship)
+  const mounts = getShipOptionMountEntriesForPrompt(ship)
   if (mounts.length === 0) return { saved: true, skipped: true }
 
   if (state.optionMountPromptPromise) return state.optionMountPromptPromise
@@ -1115,7 +1336,8 @@ function updateOptionMountButton() {
   const hasMounts = mounts.length > 0
   const complete = hasMounts && areShipOptionMountSelectionsComplete(ship)
 
-  btn.disabled = !hasMounts
+  btn.classList.toggle("hidden", !hasMounts)
+  btn.disabled = !ship || !hasMounts
   btn.classList.toggle("attentionButton", hasMounts && !complete)
   btn.title = !ship
     ? "Load a ship first"
@@ -1221,6 +1443,67 @@ function applyDamageOverlayPreset(nextPreset, options = {}) {
   if (!silent) {
     setStatus(`Damage overlay color set to ${getDamageOverlayLabel(normalized)}.`)
   }
+}
+
+function loadDamageChartMinimizedFromStorage() {
+  try {
+    return window.localStorage?.getItem(DAMAGE_CHART_MINIMIZED_STORAGE_KEY) === "true"
+  } catch {
+    return false
+  }
+}
+
+function storeDamageChartMinimizedToStorage(minimized) {
+  try {
+    window.localStorage?.setItem(DAMAGE_CHART_MINIMIZED_STORAGE_KEY, minimized === true ? "true" : "false")
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function renderDamageChartMinimizedState() {
+  const layout = typeof document.querySelector === "function" ? document.querySelector(".layout") : null
+  const panel = typeof document.querySelector === "function" ? document.querySelector(".chartPanel") : null
+  const button = byId("btnToggleDamageChart")
+  const hint = byId("damageChartHint")
+  const tableWrap = byId("damageChartWrap")
+  const minimized = state.damageChartMinimized === true
+
+  if (layout) layout.classList.toggle("chartMinimized", minimized)
+  if (panel) panel.classList.toggle("chartMinimized", minimized)
+  if (tableWrap) tableWrap.setAttribute("aria-hidden", minimized ? "true" : "false")
+  if (button) {
+    button.textContent = minimized ? "Show DAC" : "Minimize DAC"
+    button.setAttribute("aria-expanded", minimized ? "false" : "true")
+    button.title = minimized ? "Show the Damage Allocation Chart" : "Minimize the Damage Allocation Chart"
+  }
+  if (hint) {
+    hint.textContent = minimized ? "Table minimized" : "Static reference table"
+  }
+}
+
+function setDamageChartMinimized(minimized, options = {}) {
+  const silent = options && options.silent === true
+  const next = minimized === true
+  const changed = state.damageChartMinimized !== next
+  state.damageChartMinimized = next
+  renderDamageChartMinimizedState()
+  storeDamageChartMinimizedToStorage(next)
+  if (changed) {
+    const rerender = () => renderShipCanvas()
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(rerender)
+    } else {
+      window.setTimeout?.(rerender, 0)
+    }
+  }
+  if (!silent && changed) {
+    setStatus(next ? "Damage Allocation Chart minimized." : "Damage Allocation Chart shown.")
+  }
+}
+
+function toggleDamageChartMinimized() {
+  setDamageChartMinimized(!(state.damageChartMinimized === true))
 }
 
 function getDamageAssignmentModeLabel(mode) {
@@ -1446,6 +1729,43 @@ function getShipOptionMountEntries(shipOrDoc) {
     }
   }
   return out
+}
+
+function getOptionMountSortLabel(mount, fallbackIndex = -1) {
+  const designation = String(mount?.designation || "").replace(/\s+/g, " ").trim()
+  if (designation) return designation
+  return String(Math.max(1, normalizeInteger(fallbackIndex, 0) + 1))
+}
+
+function compareOptionMountEntriesForPrompt(a, b) {
+  const aIndex = normalizeInteger(a?.sourceListIndex, normalizeInteger(a?.index, 0))
+  const bIndex = normalizeInteger(b?.sourceListIndex, normalizeInteger(b?.index, 0))
+  const aLabel = getOptionMountSortLabel(a, aIndex)
+  const bLabel = getOptionMountSortLabel(b, bIndex)
+  const aNumericMatch = /^\d+$/.exec(aLabel)
+  const bNumericMatch = /^\d+$/.exec(bLabel)
+
+  if (aNumericMatch && bNumericMatch) {
+    const numberDiff = Number(aLabel) - Number(bLabel)
+    if (numberDiff !== 0) return numberDiff
+  } else if (aNumericMatch) {
+    return -1
+  } else if (bNumericMatch) {
+    return 1
+  }
+
+  const labelDiff = aLabel.localeCompare(bLabel, undefined, { numeric: true, sensitivity: "base" })
+  if (labelDiff !== 0) return labelDiff
+
+  const keyDiff = String(a?.ssdKey || "").localeCompare(String(b?.ssdKey || ""), undefined, { numeric: true, sensitivity: "base" })
+  if (keyDiff !== 0) return keyDiff
+  return normalizeInteger(a?.index, 0) - normalizeInteger(b?.index, 0)
+}
+
+function getShipOptionMountEntriesForPrompt(shipOrDoc) {
+  return getShipOptionMountEntries(shipOrDoc)
+    .map((mount, sourceListIndex) => ({ ...mount, sourceListIndex }))
+    .sort(compareOptionMountEntriesForPrompt)
 }
 
 function getShipOptionMountSelectionType(ship, optionMountId) {
@@ -2000,6 +2320,9 @@ function doesSsdKeyMatchSpec(ssdKey, spec) {
   const key = normalizeLabelToken(ssdKey)
   const wanted = normalizeLabelToken(spec)
   if (!key || !wanted) return false
+  if (USER_SELECTABLE_WEAPON_GROUP_KEYS.has(wanted)) {
+    return isDamageSpecWeaponCategoryValue(key, wanted)
+  }
   return key === wanted || key.includes(wanted)
 }
 
@@ -2012,8 +2335,14 @@ function doesSsdEntryTypeMatchSpec(entry, spec) {
   const tokens = [
     entry.countsAsType,
     entry.type,
-    entry.originalType
+    entry.originalType,
+    entry.damageSsdKey,
+    entry.displaySsdKey
   ].map((value) => normalizeLabelToken(value)).filter(Boolean)
+
+  if (USER_SELECTABLE_WEAPON_GROUP_KEYS.has(wanted)) {
+    return tokens.some((token) => isDamageSpecWeaponCategoryValue(token, wanted))
+  }
 
   const torpLikeSpec = /\btorp/.test(wanted)
   for (const token of tokens) {
@@ -2043,8 +2372,10 @@ function getShipDamageCandidateGroupsForSpec(ship, spec) {
   const groupsByDamageKey = new Map()
   const wanted = normalizeLabelToken(spec)
   if (!wanted) return []
+  if (!isInternalDamageSpecValue(spec)) return []
 
   function addEntry(ssdKey, entry) {
+    if (!isInternalDamageCandidateEntry(ssdKey, entry)) return
     const damageSsdKey = String(entry?.damageSsdKey || ssdKey || "").trim()
     if (!damageSsdKey) return
     const groupKey = normalizeLabelToken(damageSsdKey)
@@ -2171,14 +2502,19 @@ function getShipAllDamagedInternalBoxRects(ship) {
 }
 
 function getAssociatedSsdSpecsForDacLabel(chartCellLabel) {
+  const chartKey = normalizeLabelToken(chartCellLabel)
+  if (chartKey === "any weapon") return filterInternalDamageSpecs(["phaser", "heavy", "drone"])
+  if (chartKey === "torp") return filterInternalDamageSpecs(["heavy"])
+  if (chartKey === "drone") return filterInternalDamageSpecs(["drone"])
+
   const entry = findRollsLabelEntry(chartCellLabel)
   const fromRolls = Array.isArray(entry?.associatedBoxes)
     ? entry.associatedBoxes.map((item) => String(item || "").trim()).filter(Boolean)
     : []
-  if (fromRolls.length > 0) return fromRolls
+  if (fromRolls.length > 0) return filterInternalDamageSpecs(fromRolls)
 
-  const fallback = DAC_LABEL_FALLBACK_SSD_KEYS[normalizeLabelToken(chartCellLabel)]
-  return Array.isArray(fallback) ? fallback.slice() : []
+  const fallback = DAC_LABEL_FALLBACK_SSD_KEYS[chartKey]
+  return filterInternalDamageSpecs(Array.isArray(fallback) ? fallback.slice() : [])
 }
 
 function formatSelectableWeaponEntryLabel(ssdKey, entry) {
@@ -2200,8 +2536,47 @@ function formatSelectableWeaponEntryLabel(ssdKey, entry) {
   return label
 }
 
+function isPhaserDamageCandidateEntry(entry) {
+  if (!entry) return false
+  return (
+    isPhaserDamageSpecValue(entry.countsAsType) ||
+    isPhaserDamageSpecValue(entry.type) ||
+    isPhaserDamageSpecValue(entry.originalType) ||
+    isPhaserDamageSpecValue(entry.damageSsdKey) ||
+    isPhaserDamageSpecValue(entry.displaySsdKey)
+  )
+}
+
+function isPhaserDamageCandidateGroup(group, entries = null) {
+  const groupKey = group?.displaySsdKey || group?.damageSsdKey
+  if (isPhaserDamageSpecValue(groupKey)) return true
+  const list = Array.isArray(entries) ? entries : (Array.isArray(group?.entries) ? group.entries : [])
+  return list.some((entry) => isPhaserDamageCandidateEntry(entry))
+}
+
+function isDamageCandidateEntryInWeaponCategory(entry, category) {
+  if (!entry) return false
+  return (
+    isDamageSpecWeaponCategoryValue(entry.countsAsType, category) ||
+    isDamageSpecWeaponCategoryValue(entry.type, category) ||
+    isDamageSpecWeaponCategoryValue(entry.originalType, category) ||
+    isDamageSpecWeaponCategoryValue(entry.damageSsdKey, category) ||
+    isDamageSpecWeaponCategoryValue(entry.displaySsdKey, category)
+  )
+}
+
+function isDamageCandidateGroupInWeaponCategory(group, entries, category) {
+  const groupKey = group?.displaySsdKey || group?.damageSsdKey
+  if (isDamageSpecWeaponCategoryValue(groupKey, category)) return true
+  const list = Array.isArray(entries) ? entries : (Array.isArray(group?.entries) ? group.entries : [])
+  return list.some((entry) => isDamageCandidateEntryInWeaponCategory(entry, category))
+}
+
 function getPromptSsdKeyForSelectableEntries(group, entries) {
   const list = Array.isArray(entries) ? entries : []
+  if (isPhaserDamageCandidateGroup(group, list)) return "phaser"
+  if (isDamageCandidateGroupInWeaponCategory(group, list, "heavy")) return "heavy"
+  if (isDamageCandidateGroupInWeaponCategory(group, list, "drone")) return "drone"
   for (const entry of list) {
     const category = getOptionMountWeaponCategory(entry?.countsAsType)
     if (category) return category
@@ -2212,6 +2587,9 @@ function getPromptSsdKeyForSelectableEntries(group, entries) {
 function isSelectableDamageCandidateGroup(group) {
   const entries = Array.isArray(group?.entries) ? group.entries : []
   const normalizedGroupKey = normalizeLabelToken(group?.displaySsdKey || group?.damageSsdKey)
+  if (isPhaserDamageCandidateGroup(group, entries)) return true
+  if (isDamageCandidateGroupInWeaponCategory(group, entries, "heavy")) return true
+  if (isDamageCandidateGroupInWeaponCategory(group, entries, "drone")) return true
   return entries.some((entry) => {
     if (!entry) return false
     if (entry.isOptionMount) {
@@ -2229,6 +2607,53 @@ function getUndamagedDamageCandidateEntries(ship, group) {
     const damageIndex = normalizeInteger(entry.damageIndex, entry.index)
     return !getShipDamagedSsdBoxIndexSet(ship, damageKey).has(damageIndex)
   })
+}
+
+function getDamagePromptEntryKey(group, entry) {
+  const damageKey = normalizeLabelToken(entry?.damageSsdKey || group?.damageSsdKey)
+  const damageIndex = normalizeInteger(entry?.damageIndex, entry?.index)
+  return damageKey && damageIndex >= 0 ? `${damageKey}:${damageIndex}` : ""
+}
+
+function createDamagePromptEntry(group, entry) {
+  if (!group || !entry) return null
+  return {
+    ...entry,
+    promptDamageGroup: group
+  }
+}
+
+function getDamagePromptEntryGroup(entry, fallbackGroup = null) {
+  return entry?.promptDamageGroup && typeof entry.promptDamageGroup === "object"
+    ? entry.promptDamageGroup
+    : fallbackGroup
+}
+
+function collectDamagePromptEntriesForSpecs(ship, specs, options = {}) {
+  const list = Array.isArray(specs) ? specs : []
+  const selectableOnly = options.selectableOnly !== false
+  const out = []
+  const seen = new Set()
+
+  for (const spec of list) {
+    const candidateGroups = getShipDamageCandidateGroupsForSpec(ship, spec)
+    for (const group of candidateGroups) {
+      if (selectableOnly && !isSelectableDamageCandidateGroup(group)) continue
+      const availableEntries = getUndamagedDamageCandidateEntries(ship, group)
+      if (availableEntries.length === 0) continue
+
+      for (const entry of availableEntries) {
+        const key = getDamagePromptEntryKey(group, entry)
+        if (!key || seen.has(key)) continue
+        const promptEntry = createDamagePromptEntry(group, entry)
+        if (!promptEntry) continue
+        seen.add(key)
+        out.push(promptEntry)
+      }
+    }
+  }
+
+  return out
 }
 
 function markDamageCandidateEntryOnShip(ship, group, entry, presetForNew) {
@@ -2454,6 +2879,28 @@ async function tryMarkFirstAvailableSsdBoxForSpecs(ship, chartCellLabel, specs) 
   const presetForNew = getDamageOverlayPreset()
 
   const list = Array.isArray(specs) ? specs : []
+  if (isAnyWeaponDamageLabel(chartCellLabel)) {
+    const weaponEntries = collectDamagePromptEntriesForSpecs(ship, list, { selectableOnly: false })
+    if (weaponEntries.length > 0) {
+      const chosenEntry = await promptForSelectableWeaponDamage(chartCellLabel, "weapon", weaponEntries)
+      if (!chosenEntry) {
+        return {
+          selectionCanceled: true,
+          chartCellLabel: String(chartCellLabel || ""),
+          ssdKey: "weapon",
+          error: "Weapon selection canceled."
+        }
+      }
+
+      const promptGroup = getDamagePromptEntryGroup(chosenEntry)
+      const marked = markDamageCandidateEntryOnShip(ship, promptGroup, chosenEntry, presetForNew)
+      if (marked) {
+        marked.chartCellLabel = String(chartCellLabel || "")
+        return marked
+      }
+    }
+  }
+
   for (const spec of list) {
     const candidateGroups = getShipDamageCandidateGroupsForSpec(ship, spec)
     const selectableEntries = []
@@ -3370,6 +3817,7 @@ function updateManualDamageControls() {
 
   const btnResetZoom = byId("btnResetZoom")
   if (btnResetZoom) {
+    btnResetZoom.classList.toggle("hidden", !hasZoom)
     btnResetZoom.disabled = !hasShip || !hasZoom
     btnResetZoom.title = hasShip
       ? (hasZoom ? "Reset the SSD view back to full image." : "No active zoom to reset.")
@@ -4205,7 +4653,10 @@ function createShipDamageSimulationRecord(sourceShip, runtimeDamage = null) {
 
 function getDestructionPreviewTrialCount(internals) {
   const internalHits = Math.max(1, normalizeInteger(internals, 1))
-  const cappedByWork = Math.floor(DESTRUCTION_PREVIEW_MAX_DAC_HIT_SIMULATIONS / internalHits)
+  const cappedByWork = Math.max(1, Math.floor(DESTRUCTION_PREVIEW_MAX_DAC_HIT_SIMULATIONS / internalHits))
+  if (cappedByWork < DESTRUCTION_PREVIEW_MIN_TRIALS) {
+    return cappedByWork
+  }
   return clampInteger(
     Math.min(DESTRUCTION_PREVIEW_MAX_TRIALS, cappedByWork),
     DESTRUCTION_PREVIEW_MIN_TRIALS,
@@ -4245,12 +4696,14 @@ function buildDestructionPreviewSeed(ship, payload, shieldResult, internals) {
   })
 }
 
-function buildAssignDamageDestructionPreview(ship, payload) {
+function prepareAssignDamageDestructionPreviewWork(ship, payload) {
   if (!ship || typeof ship !== "object") {
     return {
-      status: "unavailable",
-      text: "Destruction chance unavailable.",
-      detail: "No active ship is selected."
+      final: {
+        status: "unavailable",
+        text: "Destruction chance unavailable.",
+        detail: "No active ship is selected."
+      }
     }
   }
 
@@ -4258,45 +4711,55 @@ function buildAssignDamageDestructionPreview(ship, payload) {
   const totalDamage = normalizeInteger(payload?.totalDamage, NaN)
   if (!rawTotalDamage || !Number.isFinite(totalDamage) || totalDamage <= 0) {
     return {
-      status: "empty",
-      text: "Destruction chance",
-      detail: "Enter damage to estimate the chance of destruction."
+      final: {
+        status: "empty",
+        text: "Destruction chance",
+        detail: "Enter damage to estimate the chance of destruction."
+      }
     }
   }
 
   const shieldNumber = normalizeInteger(payload?.shieldNumber, 0)
   if (!Number.isFinite(shieldNumber) || shieldNumber <= 0) {
     return {
-      status: "unavailable",
-      text: "Destruction chance unavailable.",
-      detail: "Select a valid shield."
+      final: {
+        status: "unavailable",
+        text: "Destruction chance unavailable.",
+        detail: "Select a valid shield."
+      }
     }
   }
 
   if (ship?.runtimeDamage?.shipDestroyed === true) {
     return {
-      status: "destroyed",
-      chance: 1,
-      chancePercent: 100,
-      text: "Destruction chance: 100%",
-      detail: "This ship is already destroyed."
+      final: {
+        status: "destroyed",
+        chance: 1,
+        chancePercent: 100,
+        text: "Destruction chance: 100%",
+        detail: "This ship is already destroyed."
+      }
     }
   }
 
   const baseShip = createShipDamageSimulationRecord(ship)
   if (!baseShip || !baseShip.doc) {
     return {
-      status: "unavailable",
-      text: "Destruction chance unavailable.",
-      detail: "No ship SSD data is loaded."
+      final: {
+        status: "unavailable",
+        text: "Destruction chance unavailable.",
+        detail: "No ship SSD data is loaded."
+      }
     }
   }
 
   if (!areShipOptionMountSelectionsComplete(baseShip)) {
     return {
-      status: "unavailable",
-      text: "Destruction chance unavailable.",
-      detail: "Choose option mount assignments first."
+      final: {
+        status: "unavailable",
+        text: "Destruction chance unavailable.",
+        detail: "Choose option mount assignments first."
+      }
     }
   }
 
@@ -4304,29 +4767,57 @@ function buildAssignDamageDestructionPreview(ship, payload) {
   const internals = Math.max(0, normalizeInteger(shieldResult.internals, 0))
   if (internals <= 0) {
     return {
-      status: "ready",
-      chance: 0,
-      chancePercent: 0,
-      trials: 0,
-      internals,
-      text: "Destruction chance: 0%",
-      detail: "No internal hits get through shields or armor."
+      final: {
+        status: "ready",
+        chance: 0,
+        chancePercent: 0,
+        trials: 0,
+        internals,
+        text: "Destruction chance: 0%",
+        detail: "No internal hits get through shields or armor."
+      }
     }
   }
 
   const trials = getDestructionPreviewTrialCount(internals)
   const baseRuntime = cloneJsonValue(baseShip.runtimeDamage, {})
-  const candidateIndex = createPreviewDamageCandidateIndex(baseShip)
-  const baseDamagedByKey = createPreviewDamagedInternalSetMap(baseRuntime)
-  const random = createSeededRandom(buildDestructionPreviewSeed(ship, payload, shieldResult, internals))
-  let destroyedTrials = 0
-
-  for (let i = 0; i < trials; i += 1) {
-    const previewState = createPreviewDacSimulationState(baseDamagedByKey)
-    const result = applyPreviewAutomaticInternalDacHits(null, internals, random, candidateIndex, previewState)
-    if (result?.destroyed) destroyedTrials += 1
+  return {
+    work: {
+      trials,
+      completedTrials: 0,
+      destroyedTrials: 0,
+      internals,
+      candidateIndex: createPreviewDamageCandidateIndex(baseShip),
+      baseDamagedByKey: createPreviewDamagedInternalSetMap(baseRuntime),
+      random: createSeededRandom(buildDestructionPreviewSeed(ship, payload, shieldResult, internals))
+    }
   }
+}
 
+function runAssignDamageDestructionPreviewTrial(work) {
+  if (!work || typeof work !== "object") return false
+  const previewState = createPreviewDacSimulationState(work.baseDamagedByKey)
+  const result = applyPreviewAutomaticInternalDacHits(null, work.internals, work.random, work.candidateIndex, previewState)
+  work.completedTrials = Math.max(0, normalizeInteger(work.completedTrials, 0)) + 1
+  if (result?.destroyed) {
+    work.destroyedTrials = Math.max(0, normalizeInteger(work.destroyedTrials, 0)) + 1
+  }
+  return true
+}
+
+function runAssignDamageDestructionPreviewChunk(work, maxMs = DESTRUCTION_PREVIEW_CHUNK_MS) {
+  if (!work || typeof work !== "object") return
+  const started = Date.now()
+  do {
+    if (normalizeInteger(work.completedTrials, 0) >= normalizeInteger(work.trials, 0)) break
+    runAssignDamageDestructionPreviewTrial(work)
+  } while (Date.now() - started < maxMs)
+}
+
+function finishAssignDamageDestructionPreviewWork(work) {
+  const trials = Math.max(0, normalizeInteger(work?.trials, 0))
+  const destroyedTrials = Math.max(0, normalizeInteger(work?.destroyedTrials, 0))
+  const internals = Math.max(0, normalizeInteger(work?.internals, 0))
   const chance = trials > 0 ? destroyedTrials / trials : 0
   const chancePercent = chance * 100
   return {
@@ -4341,6 +4832,16 @@ function buildAssignDamageDestructionPreview(ship, payload) {
   }
 }
 
+function buildAssignDamageDestructionPreview(ship, payload) {
+  const prepared = prepareAssignDamageDestructionPreviewWork(ship, payload)
+  if (prepared?.final) return prepared.final
+  const work = prepared?.work
+  while (work && normalizeInteger(work.completedTrials, 0) < normalizeInteger(work.trials, 0)) {
+    runAssignDamageDestructionPreviewTrial(work)
+  }
+  return finishAssignDamageDestructionPreviewWork(work)
+}
+
 async function sendAssignDamageDestructionPreview(payload) {
   if (!window.api || typeof window.api.setAssignDamageDestructionPreview !== "function") return
   try {
@@ -4348,6 +4849,60 @@ async function sendAssignDamageDestructionPreview(payload) {
   } catch {
     // If the assign damage window is closed or IPC is unavailable, ignore.
   }
+}
+
+function waitForNextDestructionPreviewChunk() {
+  return new Promise((resolve) => {
+    if (typeof window.setTimeout === "function") {
+      window.setTimeout(resolve, 0)
+    } else {
+      resolve()
+    }
+  })
+}
+
+async function runAssignDamageDestructionPreviewAsync(requestId, ship, payload) {
+  const prepared = prepareAssignDamageDestructionPreviewWork(ship, payload)
+  if (requestId !== state.assignDamageDestructionPreviewRequestId) return
+  if (prepared?.final) {
+    await sendAssignDamageDestructionPreview({ requestId, ...prepared.final })
+    return
+  }
+
+  const work = prepared?.work
+  if (!work) {
+    await sendAssignDamageDestructionPreview({
+      requestId,
+      status: "unavailable",
+      text: "Destruction chance unavailable.",
+      detail: "The estimate could not be prepared."
+    })
+    return
+  }
+
+  let lastProgressAt = 0
+  while (normalizeInteger(work.completedTrials, 0) < normalizeInteger(work.trials, 0)) {
+    if (requestId !== state.assignDamageDestructionPreviewRequestId) return
+    runAssignDamageDestructionPreviewChunk(work)
+
+    const now = Date.now()
+    if (now - lastProgressAt > 160 && normalizeInteger(work.completedTrials, 0) < normalizeInteger(work.trials, 0)) {
+      lastProgressAt = now
+      await sendAssignDamageDestructionPreview({
+        requestId,
+        status: "pending",
+        text: "Destruction chance",
+        detail: `Calculating estimate... ${Math.min(work.completedTrials, work.trials)}/${work.trials} trials`
+      })
+    }
+
+    if (normalizeInteger(work.completedTrials, 0) < normalizeInteger(work.trials, 0)) {
+      await waitForNextDestructionPreviewChunk()
+    }
+  }
+
+  if (requestId !== state.assignDamageDestructionPreviewRequestId) return
+  await sendAssignDamageDestructionPreview({ requestId, ...finishAssignDamageDestructionPreviewWork(work) })
 }
 
 function queueAssignDamageDestructionPreview(payload) {
@@ -4394,9 +4949,7 @@ function queueAssignDamageDestructionPreview(payload) {
     if (requestId !== state.assignDamageDestructionPreviewRequestId) return
 
     const ship = state.ships[requestedIndex]
-    const preview = buildAssignDamageDestructionPreview(ship, payload)
-    if (requestId !== state.assignDamageDestructionPreviewRequestId) return
-    void sendAssignDamageDestructionPreview({ requestId, ...preview })
+    void runAssignDamageDestructionPreviewAsync(requestId, ship, payload)
   }, DESTRUCTION_PREVIEW_DEBOUNCE_MS)
 }
 
@@ -5963,9 +6516,11 @@ async function openSuperluminalShip() {
 
 function init() {
   state.damageOverlayPreset = loadDamageOverlayPresetFromStorage()
+  state.damageChartMinimized = loadDamageChartMinimizedFromStorage()
   updateWindowTitle()
   renderDamageColorSelector()
   renderAppVersion()
+  renderDamageChartMinimizedState()
   renderDamageChart()
   renderShipSwitcher()
   renderShipInfo()
@@ -6009,6 +6564,9 @@ function init() {
 
   const btnResetZoom = byId("btnResetZoom")
   if (btnResetZoom) btnResetZoom.onclick = () => resetActiveShipZoom()
+
+  const btnToggleDamageChart = byId("btnToggleDamageChart")
+  if (btnToggleDamageChart) btnToggleDamageChart.onclick = () => toggleDamageChartMinimized()
 
   const damageColorSelect = byId("damageColorSelect")
   if (damageColorSelect) {

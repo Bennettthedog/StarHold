@@ -1,6 +1,6 @@
 {
   "name": "starhold",
-  "version": "0.2.3",
+  "version": "0.2.5",
   "description": "StarHold desktop app",
   "main": "main.js",
   "private": true,
@@ -15,8 +15,7 @@
     "weapon-select.js",
     "weapon-select.html",
     "manual-dac-roll.js",
-    "manual-dac-roll.html",
-    "Data/**"
+    "manual-dac-roll.html"
   ],
   "scripts": {
     "start": "electron .",
@@ -47,8 +46,16 @@
       "weapon-select.js",
       "weapon-select.html",
       "manual-dac-roll.js",
-      "manual-dac-roll.html",
-      "Data/**"
+      "manual-dac-roll.html"
+    ],
+    "extraResources": [
+      {
+        "from": "../../Data",
+        "to": "Data",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "win": {
       "target": "nsis"
