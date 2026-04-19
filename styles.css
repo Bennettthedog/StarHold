@@ -291,11 +291,6 @@ button:disabled:hover {
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-.panelHeader.compact {
-  margin-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-}
-
 .panelTitle {
   font-size: 13px;
   font-weight: 700;
@@ -771,10 +766,6 @@ button:disabled:hover {
   min-width: 0;
 }
 
-.formField.span2 {
-  grid-column: 1 / -1;
-}
-
 .selectFieldShell {
   position: relative;
   width: 100%;
@@ -867,140 +858,6 @@ button:disabled:hover {
   color: #ffd6d6;
 }
 
-.fieldMeta {
-  color: var(--muted);
-  font-family: "Segoe UI", sans-serif;
-  font-size: 11px;
-  line-height: 1.25;
-}
-
-.checklistDropdown {
-  display: grid;
-  gap: 6px;
-}
-
-.checklistDropdownToggle {
-  width: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text);
-  border-radius: 10px;
-  padding: 9px 10px;
-  font-family: "Segoe UI", sans-serif;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  text-align: left;
-}
-
-.checklistDropdownToggle:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.18);
-  box-shadow: none;
-}
-
-.checklistDropdownToggle:focus-visible {
-  outline: none;
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 1px rgba(255, 92, 92, 0.12);
-}
-
-.checklistDropdownToggle:disabled {
-  color: var(--muted);
-  opacity: 0.75;
-}
-
-.checklistDropdownToggle:disabled:hover {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: rgba(255, 255, 255, 0.12);
-}
-
-.checklistDropdownSummary {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.checklistDropdown.open .checklistDropdownToggle {
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 1px rgba(255, 92, 92, 0.12);
-}
-
-.checklistDropdown.open .checklistDropdownToggle .dropdownChevron {
-  border-color: #ffd6d6;
-  transform: translateY(2px) rotate(225deg);
-}
-
-.checklistDropdownPanel {
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.025);
-  border-radius: 10px;
-  padding: 8px;
-  display: grid;
-  gap: 6px;
-}
-
-.checklistDropdownPanel.hidden {
-  display: none;
-}
-
-.phaserChoiceList {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.02);
-  border-radius: 8px;
-  padding: 6px;
-  max-height: 180px;
-  overflow: auto;
-  display: grid;
-  gap: 6px;
-}
-
-.phaserChoiceEmpty {
-  color: var(--muted);
-  font-family: "Segoe UI", sans-serif;
-  font-size: 12px;
-  line-height: 1.25;
-}
-
-.phaserChoiceItem {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 4px 2px;
-  border-radius: 8px;
-}
-
-.phaserChoiceItem:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.phaserChoiceItem input[type="checkbox"] {
-  margin: 2px 0 0;
-  accent-color: #ff7a7a;
-}
-
-.phaserChoiceLabel {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  color: var(--text);
-  font-family: "Segoe UI", sans-serif;
-  font-size: 12px;
-  line-height: 1.2;
-}
-
-.phaserChoiceLabel strong {
-  color: #fff0f0;
-  font-weight: 600;
-}
-
-.phaserChoiceLabel span {
-  color: var(--muted);
-}
-
 .modalHint {
   margin-top: 10px;
   color: var(--muted);
@@ -1056,10 +913,6 @@ button:disabled:hover {
   gap: 8px;
   padding: 12px 14px 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.assignModePromptCard {
-  width: min(520px, calc(100vw - 28px));
 }
 
 .assignModePromptBody {

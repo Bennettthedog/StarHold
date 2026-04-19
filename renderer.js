@@ -1,134 +1,3 @@
-const DAMAGE_ALLOCATION_CHART = {
-  caption: "(D4.21) DAMAGE ALLOCATION CHART",
-  columns: ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M"],
-  rows: [
-    {
-      dieRoll: "2",
-      cells: [
-        "Bridge", "Flag\nBridge", "Sensor", "Damage\nControl", "A Hull", "Left\nW En", "Trans",
-        "Tractor", "Shuttle", "Lab", "F Hull", "Right\nW En", "Excess\nDamage"
-      ]
-    },
-    {
-      dieRoll: "3",
-      cells: [
-        "Drone", "Phaser", "Impulse", "Left\nW En", "Right\nW En", "A Hull", "Shuttle",
-        "Damage\nControl", "Center\nW En", "Lab", "Battery", "Phaser", "Excess\nDamage"
-      ]
-    },
-    {
-      dieRoll: "4",
-      cells: [
-        "Phaser", "Trans", "Right\nW En", "Impulse", "F Hull", "A Hull", "Left\nW En",
-        "APR", "Lab", "Trans", "Probe", "Center\nW En", "Excess\nDamage"
-      ]
-    },
-    {
-      dieRoll: "5",
-      cells: [
-        "Right\nW En", "A Hull", "Cargo", "Battery", "Shuttle", "Torp", "Left\nW En",
-        "Impulse", "Right\nW En", "Tractor", "Probe", "Any\nWeapon", "Excess\nDamage"
-      ]
-    },
-    {
-      dieRoll: "6",
-      cells: [
-        "F Hull", "Impulse", "Lab", "Left\nW En", "Sensor", "Tractor", "Shuttle",
-        "Right\nW En", "Phaser", "Trans", "Battery", "Any\nWeapon", "Excess\nDamage"
-      ]
-    },
-    {
-      dieRoll: "7",
-      cells: [
-        "Cargo", "F Hull", "Battery", "Center\nW En", "Shuttle", "APR", "Lab",
-        "Phaser", "Any\nW En", "Probe", "A Hull", "Any\nWeapon", "Excess\nDamage"
-      ]
-    },
-    {
-      dieRoll: "8",
-      cells: [
-        "A Hull", "APR", "Shuttle", "Right\nW En", "Scanner", "Tractor", "Lab",
-        "Left\nW En", "Phaser", "Trans", "Battery", "Any\nWeapon", "Excess\nDamage"
-      ]
-    },
-    {
-      dieRoll: "9",
-      cells: [
-        "Left\nW En", "F Hull", "Cargo", "Battery", "Lab", "Drone", "Right\nW En",
-        "Impulse", "Left\nW En", "Tractor", "Probe", "Any\nWeapon", "Excess\nDamage"
-      ]
-    },
-    {
-      dieRoll: "10",
-      cells: [
-        "Phaser", "Tractor", "Left\nW En", "Impulse", "A Hull", "F Hull", "Right\nW En",
-        "APR", "Lab", "Trans", "Probe", "Center\nW En", "Excess\nDamage"
-      ]
-    },
-    {
-      dieRoll: "11",
-      cells: [
-        "Torp", "Phaser", "Impulse", "Right\nW En", "Left\nW En", "F Hull", "Tractor",
-        "Damage\nControl", "Center\nW En", "Lab", "Battery", "Phaser", "Excess\nDamage"
-      ]
-    },
-    {
-      dieRoll: "12",
-      cells: [
-        "Aux\nCon", "Emer\nBridge", "Scanner", "Probe", "F Hull", "Right\nW En", "Trans",
-        "Shuttle", "Tractor", "Lab", "A Hull", "Left\nW En", "Excess\nDamage"
-      ]
-    }
-  ]
-}
-
-const UNDERLINED_DAMAGE_ALLOCATION_CELLS = new Set([
-  "2:A", "2:B", "2:C", "2:D", "2:E",
-  "3:A", "3:B", "3:H",
-  "4:A", "4:B",
-  "5:A", "5:F",
-  "6:E",
-  "8:E",
-  "9:A", "9:F",
-  "10:A", "10:B",
-  "11:A", "11:B", "11:H",
-  "12:A", "12:B", "12:C", "12:D", "12:E"
-])
-
-function isUnderlinedDamageCell(dieRoll, column) {
-  return UNDERLINED_DAMAGE_ALLOCATION_CELLS.has(`${String(dieRoll)}:${String(column)}`)
-}
-
-const DAC_LABEL_FALLBACK_SSD_KEYS = {
-  "a hull": ["Aft Hull"],
-  "apr": ["APR"],
-  "any w en": ["Left Warp", "Center Warp", "Right Warp"],
-  "any weapon": ["phaser", "heavy", "Drone", "Pseudo Plasma Torpedo"],
-  "aux con": ["Auxiliary Control", "Aux Con"],
-  "battery": ["Battery"],
-  "bridge": ["Bridge"],
-  "cargo": ["Cargo"],
-  "center w en": ["Center Warp"],
-  "damage control": ["Damage Control"],
-  "drone": ["Drone"],
-  "emer bridge": ["Emergency Bridge", "Emer Bridge"],
-  "excess damage": [],
-  "f hull": ["Forward Hull"],
-  "flag bridge": ["Flag Bridge"],
-  "impulse": ["Impulse"],
-  "lab": ["Lab"],
-  "left w en": ["Left Warp"],
-  "phaser": ["phaser"],
-  "probe": ["Probe"],
-  "right w en": ["Right Warp"],
-  "scanner": ["Scanner"],
-  "sensor": ["Sensor"],
-  "shuttle": ["Shuttle", "Admin Shuttles"],
-  "torp": ["heavy", "Pseudo Plasma Torpedo"],
-  "tractor": ["Tractor"],
-  "trans": ["Transporter"]
-}
-
 const EXTERNAL_DAMAGE_BOX_FALLBACK_KEYS = new Set([
   "crew units",
   "admin shuttles",
@@ -429,6 +298,10 @@ const state = {
   ships: [],
   activeShipIndex: -1,
   rollsConfig: null,
+  damageChartCaption: "",
+  damageChartColumns: [],
+  damageChartRows: [],
+  underlinedDamageCells: new Set(),
   shipyardDataConfig: null,
   shipyardDataPath: "",
   shipyardDataLoadPromise: null,
@@ -608,8 +481,47 @@ function buildOptionMountId(ssdKey, sourceOrder) {
   return `${key}:${Math.max(0, normalizeInteger(sourceOrder, 0))}`
 }
 
+function normalizeRollsChartColumns(chart) {
+  return (Array.isArray(chart?.columns) ? chart.columns : [])
+    .map((column) => String(column || "").trim())
+    .filter(Boolean)
+}
+
+function normalizeRollsChartRows(chart, columns) {
+  const rows = Array.isArray(chart?.rows) ? chart.rows : []
+  const columnCount = Array.isArray(columns) ? columns.length : 0
+  return rows
+    .map((row) => {
+      const dieRoll = String(row?.dieRoll || "").trim()
+      const cells = Array.isArray(row?.cells)
+        ? row.cells.slice(0, columnCount).map((cell) => String(cell || ""))
+        : []
+      if (!dieRoll || cells.length !== columnCount) return null
+      return { dieRoll, cells }
+    })
+    .filter(Boolean)
+}
+
+function normalizeRollsUnderlinedCells(chart) {
+  const out = new Set()
+  const cells = Array.isArray(chart?.underlinedCells) ? chart.underlinedCells : []
+  for (const cell of cells) {
+    const key = String(cell || "").trim()
+    if (key) out.add(key)
+  }
+  return out
+}
+
 function setRollsConfig(rollsConfig) {
   state.rollsConfig = rollsConfig && typeof rollsConfig === "object" ? rollsConfig : null
+  const chart = state.rollsConfig?.chart && typeof state.rollsConfig.chart === "object"
+    ? state.rollsConfig.chart
+    : null
+  const columns = normalizeRollsChartColumns(chart)
+  state.damageChartCaption = String(chart?.caption || "").trim()
+  state.damageChartColumns = columns
+  state.damageChartRows = normalizeRollsChartRows(chart, columns)
+  state.underlinedDamageCells = normalizeRollsUnderlinedCells(chart)
   state.rollsLabelEntriesByChartLabel = new Map()
   state.rollsLabelEntriesByLabel = new Map()
 
@@ -826,13 +738,19 @@ function getDamageSpecWeaponCategories(value) {
   return categories
 }
 
-function normalizeDamageSpecGroupValue(value) {
+function getDamageSpecValue(spec) {
+  return spec && typeof spec === "object" && Object.prototype.hasOwnProperty.call(spec, "value")
+    ? spec.value
+    : spec
+}
+
+function isExactDamageSpec(spec) {
+  return !!(spec && typeof spec === "object" && spec.exact === true)
+}
+
+function createExactDamageSpec(value) {
   const raw = String(value || "").replace(/\s+/g, " ").trim()
-  if (!raw) return ""
-  if (isExternalDamageBoxNameKey(raw)) return raw
-  if (isPhaserDamageSpecValue(raw)) return "phaser"
-  const categories = getDamageSpecWeaponCategories(raw)
-  return categories.length === 1 ? categories[0] : raw
+  return raw ? { value: raw, exact: true } : null
 }
 
 function isAnyWeaponDamageLabel(value) {
@@ -844,11 +762,11 @@ function filterInternalDamageSpecs(specs) {
   const out = []
   const seen = new Set()
   for (const spec of list) {
-    const normalized = normalizeDamageSpecGroupValue(spec)
-    const key = normalizeLabelToken(normalized)
-    if (!key || seen.has(key) || !isInternalDamageSpecValue(normalized)) continue
+    const raw = String(getDamageSpecValue(spec) || "").replace(/\s+/g, " ").trim()
+    const key = normalizeLabelToken(raw)
+    if (!key || seen.has(key) || !isInternalDamageSpecValue(raw)) continue
     seen.add(key)
-    out.push(normalized)
+    out.push(isExactDamageSpec(spec) ? spec : raw)
   }
   return out
 }
@@ -864,9 +782,21 @@ function findRollsLabelEntry(chartCellLabel) {
   return null
 }
 
+function isDamageChartLoaded() {
+  return state.damageChartColumns.length > 0 && state.damageChartRows.length > 0
+}
+
+function isUnderlinedDamageCell(dieRoll, column) {
+  const underlined = state.underlinedDamageCells instanceof Set
+    ? state.underlinedDamageCells
+    : new Set()
+  return underlined.has(`${String(dieRoll)}:${String(column)}`)
+}
+
 async function loadRollsConfig() {
   if (!window.api || typeof window.api.getRollsConfig !== "function") {
     setRollsConfig(null)
+    renderDamageChart()
     return
   }
 
@@ -874,11 +804,16 @@ async function loadRollsConfig() {
     const res = await window.api.getRollsConfig()
     if (!res || !res.ok) {
       setRollsConfig(null)
+      renderDamageChart()
+      setStatus(res?.error || "Failed to load Rolls.json.")
       return
     }
     setRollsConfig(res.rollsConfig || null)
+    renderDamageChart()
   } catch {
     setRollsConfig(null)
+    renderDamageChart()
+    setStatus("Failed to load Rolls.json.")
   }
 }
 
@@ -1508,10 +1443,6 @@ function toggleDamageChartMinimized() {
 
 function getDamageAssignmentModeLabel(mode) {
   return normalizeDamageAssignmentMode(mode) === "automatic" ? "Automatic" : "Manual"
-}
-
-function shieldKeyForNumber(shieldNumber) {
-  return `Shield #${normalizeInteger(shieldNumber, 1)}`
 }
 
 function getShipShieldValues(doc) {
@@ -2268,66 +2199,18 @@ function getShipSsdKeys(doc) {
   return Object.keys(ssd)
 }
 
-function resolveSsdKeysFromSpec(doc, spec) {
-  const raw = String(spec || "").trim()
-  if (!raw) return []
-
-  const ssdKeys = getShipSsdKeys(doc)
-  if (ssdKeys.length === 0) return []
-
-  if (ssdKeys.includes(raw)) return [raw]
-
-  const wanted = normalizeLabelToken(raw)
-  if (!wanted) return []
-
-  const exactNormalized = ssdKeys.filter((key) => normalizeLabelToken(key) === wanted)
-  if (exactNormalized.length > 0) return exactNormalized
-
-  const containsNormalized = ssdKeys.filter((key) => normalizeLabelToken(key).includes(wanted))
-  if (containsNormalized.length > 0) return containsNormalized
-
-  // Fall back to matching by SSD entry type (e.g. "Photon Torpedo", "Plasma Torpedo S")
-  // so weapon-type specs are not tied to any bearing/arc text.
-  const typeMatchedKeys = []
-  const torpLikeSpec = /\btorp/.test(wanted)
-  for (const key of ssdKeys) {
-    const entries = Array.isArray(doc?.ssd?.[key]) ? doc.ssd[key] : []
-    if (entries.length === 0) continue
-
-    let matched = false
-    for (const entry of entries) {
-      const typeWanted = normalizeLabelToken(entry?.type || "")
-      if (!typeWanted) continue
-      if (typeWanted === wanted || typeWanted.includes(wanted) || wanted.includes(typeWanted)) {
-        matched = true
-        break
-      }
-      if (torpLikeSpec && /\btorp/.test(typeWanted)) {
-        matched = true
-        break
-      }
-    }
-    if (matched) typeMatchedKeys.push(key)
-  }
-  if (typeMatchedKeys.length > 0) {
-    return Array.from(new Set(typeMatchedKeys))
-  }
-
-  return []
-}
-
 function doesSsdKeyMatchSpec(ssdKey, spec) {
   const key = normalizeLabelToken(ssdKey)
-  const wanted = normalizeLabelToken(spec)
+  const wanted = normalizeLabelToken(getDamageSpecValue(spec))
   if (!key || !wanted) return false
-  if (USER_SELECTABLE_WEAPON_GROUP_KEYS.has(wanted)) {
+  if (!isExactDamageSpec(spec) && USER_SELECTABLE_WEAPON_GROUP_KEYS.has(wanted)) {
     return isDamageSpecWeaponCategoryValue(key, wanted)
   }
-  return key === wanted || key.includes(wanted)
+  return key === wanted
 }
 
 function doesSsdEntryTypeMatchSpec(entry, spec) {
-  const wanted = normalizeLabelToken(spec)
+  const wanted = normalizeLabelToken(getDamageSpecValue(spec))
   if (!wanted || !entry) return false
 
   if (entry.isOptionMount && !entry.countsAsType) return false
@@ -2340,23 +2223,19 @@ function doesSsdEntryTypeMatchSpec(entry, spec) {
     entry.displaySsdKey
   ].map((value) => normalizeLabelToken(value)).filter(Boolean)
 
-  if (USER_SELECTABLE_WEAPON_GROUP_KEYS.has(wanted)) {
+  if (!isExactDamageSpec(spec) && USER_SELECTABLE_WEAPON_GROUP_KEYS.has(wanted)) {
     return tokens.some((token) => isDamageSpecWeaponCategoryValue(token, wanted))
   }
 
-  const torpLikeSpec = /\btorp/.test(wanted)
-  for (const token of tokens) {
-    if (token === wanted || token.includes(wanted) || wanted.includes(token)) return true
-    if (torpLikeSpec && /\btorp/.test(token)) return true
-  }
-  return false
+  return tokens.some((token) => token === wanted)
 }
 
 function isOptionMountEntryMatchForGroupSpec(entry, spec) {
   if (!entry?.isOptionMount) return true
+  if (isExactDamageSpec(spec)) return true
   const category = getOptionMountWeaponCategory(entry.countsAsType)
   if (!category) return false
-  const wanted = normalizeLabelToken(spec)
+  const wanted = normalizeLabelToken(getDamageSpecValue(spec))
   if (USER_SELECTABLE_WEAPON_GROUP_KEYS.has(wanted)) {
     return category === wanted
   }
@@ -2370,9 +2249,9 @@ function getShipDamageCandidateGroupsForSpec(ship, spec) {
 
   const groups = []
   const groupsByDamageKey = new Map()
-  const wanted = normalizeLabelToken(spec)
+  const wanted = normalizeLabelToken(getDamageSpecValue(spec))
   if (!wanted) return []
-  if (!isInternalDamageSpecValue(spec)) return []
+  if (!isInternalDamageSpecValue(getDamageSpecValue(spec))) return []
 
   function addEntry(ssdKey, entry) {
     if (!isInternalDamageCandidateEntry(ssdKey, entry)) return
@@ -2502,19 +2381,13 @@ function getShipAllDamagedInternalBoxRects(ship) {
 }
 
 function getAssociatedSsdSpecsForDacLabel(chartCellLabel) {
-  const chartKey = normalizeLabelToken(chartCellLabel)
-  if (chartKey === "any weapon") return filterInternalDamageSpecs(["phaser", "heavy", "drone"])
-  if (chartKey === "torp") return filterInternalDamageSpecs(["heavy"])
-  if (chartKey === "drone") return filterInternalDamageSpecs(["drone"])
-
   const entry = findRollsLabelEntry(chartCellLabel)
   const fromRolls = Array.isArray(entry?.associatedBoxes)
-    ? entry.associatedBoxes.map((item) => String(item || "").trim()).filter(Boolean)
+    ? entry.associatedBoxes
+        .map((item) => createExactDamageSpec(item))
+        .filter(Boolean)
     : []
-  if (fromRolls.length > 0) return filterInternalDamageSpecs(fromRolls)
-
-  const fallback = DAC_LABEL_FALLBACK_SSD_KEYS[chartKey]
-  return filterInternalDamageSpecs(Array.isArray(fallback) ? fallback.slice() : [])
+  return filterInternalDamageSpecs(fromRolls)
 }
 
 function formatSelectableWeaponEntryLabel(ssdKey, entry) {
@@ -2971,14 +2844,14 @@ async function tryMarkFirstAvailableSsdBoxForSpecs(ship, chartCellLabel, specs) 
 
 function getDacRowForRoll(rollValue) {
   const wanted = String(clampInteger(rollValue, 2, 12))
-  return DAMAGE_ALLOCATION_CHART.rows.find((row) => String(row?.dieRoll || "") === wanted) || null
+  return state.damageChartRows.find((row) => String(row?.dieRoll || "") === wanted) || null
 }
 
 function createPreviewDamageCandidateIndex(ship) {
   const cache = new Map()
   return {
     getGroups(spec) {
-      const key = normalizeLabelToken(spec)
+      const key = normalizeLabelToken(getDamageSpecValue(spec))
       if (!key) return []
       if (!cache.has(key)) {
         const groups = getShipDamageCandidateGroupsForSpec(ship, spec).map((group) => {
@@ -3135,8 +3008,8 @@ function applyPreviewInternalDacHit(ship, rollValue, candidateIndex = null, prev
     const row = getDacRowForRoll(rollValue)
     if (!row) return { ok: false, error: "Invalid DAC roll." }
 
-    for (let colIndex = 0; colIndex < DAMAGE_ALLOCATION_CHART.columns.length; colIndex += 1) {
-      const column = DAMAGE_ALLOCATION_CHART.columns[colIndex]
+    for (let colIndex = 0; colIndex < state.damageChartColumns.length; colIndex += 1) {
+      const column = state.damageChartColumns[colIndex]
       const chartCellLabel = String(row.cells?.[colIndex] || "")
       const dacCellKey = `${row.dieRoll}:${column}`
       const underlined = isUnderlinedDamageCell(row.dieRoll, column)
@@ -3180,8 +3053,8 @@ function applyPreviewInternalDacHit(ship, rollValue, candidateIndex = null, prev
   const row = getDacRowForRoll(rollValue)
   if (!row) return { ok: false, error: "Invalid DAC roll." }
 
-  for (let colIndex = 0; colIndex < DAMAGE_ALLOCATION_CHART.columns.length; colIndex += 1) {
-    const column = DAMAGE_ALLOCATION_CHART.columns[colIndex]
+  for (let colIndex = 0; colIndex < state.damageChartColumns.length; colIndex += 1) {
+    const column = state.damageChartColumns[colIndex]
     const chartCellLabel = String(row.cells?.[colIndex] || "")
     const dacCellKey = `${row.dieRoll}:${column}`
     const underlined = isUnderlinedDamageCell(row.dieRoll, column)
@@ -3380,8 +3253,8 @@ async function applyManualInternalDacHit(ship, rollValue) {
   const row = getDacRowForRoll(rollValue)
   if (!row) return { ok: false, error: "Invalid DAC roll." }
 
-  for (let colIndex = 0; colIndex < DAMAGE_ALLOCATION_CHART.columns.length; colIndex += 1) {
-    const column = DAMAGE_ALLOCATION_CHART.columns[colIndex]
+  for (let colIndex = 0; colIndex < state.damageChartColumns.length; colIndex += 1) {
+    const column = state.damageChartColumns[colIndex]
     const chartCellLabel = String(row.cells?.[colIndex] || "")
     const dacCellKey = `${row.dieRoll}:${column}`
     const underlined = isUnderlinedDamageCell(row.dieRoll, column)
@@ -4539,75 +4412,6 @@ function buildAssignDamageShieldOptions(doc) {
   return fallback
 }
 
-function populateAssignDamageShieldSelect(doc, selectedShieldNumber = 1) {
-  const select = byId("assignShieldNumber")
-  if (!select) return
-  select.innerHTML = ""
-
-  const options = buildAssignDamageShieldOptions(doc)
-  for (const entry of options) {
-    const option = document.createElement("option")
-    option.value = String(entry.number)
-    option.textContent = entry.value > 0
-      ? `Shield #${entry.number} (${entry.value})`
-      : `Shield #${entry.number}`
-    select.appendChild(option)
-  }
-
-  const desired = String(normalizeInteger(selectedShieldNumber, 1))
-  const hasDesired = options.some((entry) => String(entry.number) === desired)
-  select.value = hasDesired ? desired : String(options[0]?.number || 1)
-}
-
-function renderAssignDamagePhaserList(doc, selectedKeys = []) {
-  const container = byId("assignNonBearingPhasersList")
-  const meta = byId("assignPhaserListMeta")
-  if (!container) return
-
-  const selectedSet = new Set(Array.isArray(selectedKeys) ? selectedKeys.map((k) => String(k)) : [])
-  const phasers = getShipPhaserEntries(doc)
-  container.innerHTML = ""
-
-  if (meta) {
-    meta.textContent = phasers.length > 0
-      ? `Select any bearing phasers (${phasers.length} total).`
-      : "No phasers found in the active ship JSON."
-  }
-
-  if (phasers.length === 0) {
-    const empty = document.createElement("div")
-    empty.className = "phaserChoiceEmpty"
-    empty.textContent = "No phaser entries were found in this ship's SSD data."
-    container.appendChild(empty)
-    return
-  }
-
-  for (const phaser of phasers) {
-    const row = document.createElement("label")
-    row.className = "phaserChoiceItem"
-
-    const input = document.createElement("input")
-    input.type = "checkbox"
-    input.value = phaser.key
-    input.checked = selectedSet.has(phaser.key)
-
-    const text = document.createElement("div")
-    text.className = "phaserChoiceLabel"
-    const strong = document.createElement("strong")
-    strong.textContent = phaser.designation
-      ? `${phaser.type} ${phaser.designation}`
-      : `${phaser.type} #${phaser.index + 1}`
-    const sub = document.createElement("span")
-    sub.textContent = `Arc: ${phaser.arc}`
-    text.appendChild(strong)
-    text.appendChild(sub)
-
-    row.appendChild(input)
-    row.appendChild(text)
-    container.appendChild(row)
-  }
-}
-
 function getSelectedAssignDamagePhasers(doc) {
   const container = byId("assignNonBearingPhasersList")
   const phasers = getShipPhaserEntries(doc)
@@ -4632,11 +4436,6 @@ function getActiveShipDamageAssignment() {
   const ship = getActiveShipRecord()
   if (!ship || !ship.damageAssignment || typeof ship.damageAssignment !== "object") return null
   return ship.damageAssignment
-}
-
-function getShipDamageAssignmentPreview(ship) {
-  if (!ship || !ship.damageAssignmentPreview || typeof ship.damageAssignmentPreview !== "object") return null
-  return ship.damageAssignmentPreview
 }
 
 function createShipDamageSimulationRecord(sourceShip, runtimeDamage = null) {
@@ -4830,16 +4629,6 @@ function finishAssignDamageDestructionPreviewWork(work) {
     text: `Destruction chance: ${formatDestructionChancePercent(chance)}`,
     detail: `Estimated from ${trials.toLocaleString()} DAC trial${trials === 1 ? "" : "s"} after ${internals} internal hit${internals === 1 ? "" : "s"}.`
   }
-}
-
-function buildAssignDamageDestructionPreview(ship, payload) {
-  const prepared = prepareAssignDamageDestructionPreviewWork(ship, payload)
-  if (prepared?.final) return prepared.final
-  const work = prepared?.work
-  while (work && normalizeInteger(work.completedTrials, 0) < normalizeInteger(work.trials, 0)) {
-    runAssignDamageDestructionPreviewTrial(work)
-  }
-  return finishAssignDamageDestructionPreviewWork(work)
 }
 
 async function sendAssignDamageDestructionPreview(payload) {
@@ -5484,71 +5273,6 @@ function parsePosRect(posText) {
   return { x1, y1, x2, y2 }
 }
 
-function unionBounds(rects) {
-  const list = Array.isArray(rects) ? rects.filter(Boolean) : []
-  if (list.length === 0) return null
-  let x1 = Infinity
-  let y1 = Infinity
-  let x2 = -Infinity
-  let y2 = -Infinity
-  for (const r of list) {
-    if (r.x1 < x1) x1 = r.x1
-    if (r.y1 < y1) y1 = r.y1
-    if (r.x2 > x2) x2 = r.x2
-    if (r.y2 > y2) y2 = r.y2
-  }
-  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return null
-  return { x1, y1, x2, y2 }
-}
-
-function collectSsdRects(ssd, predicate = null) {
-  if (!ssd || typeof ssd !== "object") return []
-  const out = []
-  for (const [key, entries] of Object.entries(ssd)) {
-    if (predicate && predicate(key) !== true) continue
-    if (!Array.isArray(entries)) continue
-    for (const entry of entries) {
-      const rect = parsePosRect(entry?.pos)
-      if (rect) out.push(rect)
-    }
-  }
-  return out
-}
-
-function isShieldKey(key) {
-  return /^shield\s*#\d+$/i.test(String(key || "").trim())
-}
-
-function computeAverageBoxSize(rects) {
-  const list = Array.isArray(rects) ? rects : []
-  if (list.length === 0) return 10
-  let sum = 0
-  let count = 0
-  for (const r of list) {
-    const w = Math.max(1, Math.abs(Number(r.x2) - Number(r.x1)))
-    const h = Math.max(1, Math.abs(Number(r.y2) - Number(r.y1)))
-    sum += (w + h) / 2
-    count += 1
-  }
-  return count > 0 ? sum / count : 10
-}
-
-function clampCropToImage(crop, imgW, imgH) {
-  if (!crop || !Number.isFinite(imgW) || !Number.isFinite(imgH) || imgW <= 0 || imgH <= 0) return null
-  let x1 = Math.max(0, Math.floor(crop.x1))
-  let y1 = Math.max(0, Math.floor(crop.y1))
-  let x2 = Math.min(imgW, Math.ceil(crop.x2))
-  let y2 = Math.min(imgH, Math.ceil(crop.y2))
-  if (x2 <= x1) x2 = Math.min(imgW, x1 + 1)
-  if (y2 <= y1) y2 = Math.min(imgH, y1 + 1)
-  return {
-    x: x1,
-    y: y1,
-    w: Math.max(1, x2 - x1),
-    h: Math.max(1, y2 - y1)
-  }
-}
-
 function computeShieldCrop(doc, image) {
   if (!image || !Number.isFinite(image.width) || !Number.isFinite(image.height)) return null
   return {
@@ -6055,8 +5779,19 @@ function renderDamageChart() {
   const activeDacCellKey = getShipActiveDacCellKey(activeShip)
 
   const caption = document.createElement("caption")
-  caption.textContent = DAMAGE_ALLOCATION_CHART.caption
+  caption.textContent = state.damageChartCaption || "Damage Allocation Chart"
   table.appendChild(caption)
+
+  if (!isDamageChartLoaded()) {
+    const tbody = document.createElement("tbody")
+    const tr = document.createElement("tr")
+    const td = document.createElement("td")
+    td.textContent = "Roll assignment data is not loaded from Rolls.json."
+    tr.appendChild(td)
+    tbody.appendChild(tr)
+    table.appendChild(tbody)
+    return
+  }
 
   const thead = document.createElement("thead")
   const hr = document.createElement("tr")
@@ -6067,7 +5802,7 @@ function renderDamageChart() {
   corner.innerHTML = "DIE<br>ROLL"
   hr.appendChild(corner)
 
-  for (const col of DAMAGE_ALLOCATION_CHART.columns) {
+  for (const col of state.damageChartColumns) {
     const th = document.createElement("th")
     th.scope = "col"
     th.textContent = col
@@ -6077,7 +5812,7 @@ function renderDamageChart() {
   table.appendChild(thead)
 
   const tbody = document.createElement("tbody")
-  for (const rowDef of DAMAGE_ALLOCATION_CHART.rows) {
+  for (const rowDef of state.damageChartRows) {
     const tr = document.createElement("tr")
     const rowHead = document.createElement("th")
     rowHead.scope = "row"
@@ -6085,10 +5820,10 @@ function renderDamageChart() {
     rowHead.textContent = rowDef.dieRoll
     tr.appendChild(rowHead)
 
-    for (let i = 0; i < DAMAGE_ALLOCATION_CHART.columns.length; i++) {
+    for (let i = 0; i < state.damageChartColumns.length; i++) {
       const td = document.createElement("td")
       const text = String(rowDef.cells?.[i] || "")
-      const columnKey = DAMAGE_ALLOCATION_CHART.columns[i]
+      const columnKey = state.damageChartColumns[i]
       const dacCellKey = `${String(rowDef.dieRoll)}:${String(columnKey)}`
       const span = document.createElement("span")
       span.className = "cellText"

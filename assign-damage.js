@@ -2,8 +2,6 @@ const state = {
   context: null,
   submitInProgress: false,
   manualDacSubmitInProgress: false,
-  modePromptPromise: null,
-  modePromptResolver: null,
   weaponPromptOpen: false,
   manualDacPromptOpen: false,
   manualDacContext: null
@@ -65,89 +63,12 @@ function setControlsDisabled(disabled) {
     "assignTotalDamage",
     "assignShieldNumber",
     "assignDamageMode",
-    "btnAssignDamageSubmit",
-    "assignNonBearingPhasersToggle"
+    "btnAssignDamageSubmit"
   ]
   for (const id of ids) {
     const el = byId(id)
     if (el) el.disabled = !!disabled
   }
-
-  const list = byId("assignNonBearingPhasersList")
-  if (list) {
-    const inputs = list.querySelectorAll('input[type="checkbox"]')
-    for (const input of inputs) {
-      input.disabled = !!disabled
-    }
-  }
-
-  if (disabled) {
-    setPhaserDropdownOpen(false)
-  } else {
-    syncPhaserDropdownToggleState()
-  }
-}
-
-function isPhaserDropdownOpen() {
-  const root = byId("assignNonBearingPhasersDropdown")
-  return !!root && root.classList.contains("open")
-}
-
-function setPhaserDropdownOpen(open) {
-  const root = byId("assignNonBearingPhasersDropdown")
-  const toggle = byId("assignNonBearingPhasersToggle")
-  const panel = byId("assignNonBearingPhasersPanel")
-  if (!root || !toggle || !panel) return
-
-  const next = !!open && !toggle.disabled
-  root.classList.toggle("open", next)
-  panel.classList.toggle("hidden", !next)
-  toggle.setAttribute("aria-expanded", next ? "true" : "false")
-}
-
-function getPhaserCheckboxCounts() {
-  const container = byId("assignNonBearingPhasersList")
-  if (!container) return { total: 0, selected: 0 }
-  return {
-    total: container.querySelectorAll('input[type="checkbox"]').length,
-    selected: container.querySelectorAll('input[type="checkbox"]:checked').length
-  }
-}
-
-function syncPhaserDropdownToggleState() {
-  const toggle = byId("assignNonBearingPhasersToggle")
-  if (!toggle) return
-
-  const ctx = state.context || {}
-  const { total } = getPhaserCheckboxCounts()
-  const disabled = ctx.available !== true || total === 0
-  toggle.disabled = disabled
-  if (disabled) setPhaserDropdownOpen(false)
-}
-
-function updatePhaserDropdownSummary() {
-  const summary = byId("assignNonBearingPhasersSummary")
-  if (!summary) return
-
-  const { total, selected } = getPhaserCheckboxCounts()
-  if (total <= 0) {
-    summary.textContent = "No phasers available"
-    return
-  }
-  if (selected <= 0) {
-    summary.textContent = `Select phasers (${total} total)`
-    return
-  }
-  if (selected === 1) {
-    summary.textContent = `1 phaser selected (${total} total)`
-    return
-  }
-  summary.textContent = `${selected} phasers selected (${total} total)`
-}
-
-function isModePromptOpen() {
-  const overlay = byId("assignModePromptOverlay")
-  return !!overlay && !overlay.classList.contains("hidden")
 }
 
 function isWeaponPromptOpen() {
@@ -158,42 +79,6 @@ function isWeaponPromptOpen() {
 function isManualDacPromptOpen() {
   const overlay = byId("assignManualDacOverlay")
   return !!overlay && !overlay.classList.contains("hidden")
-}
-
-function setModePromptOpen(open) {
-  const overlay = byId("assignModePromptOverlay")
-  if (!overlay) return
-  overlay.classList.toggle("hidden", !open)
-  if (open) {
-    const preferred = byId("btnAssignModeManual") || byId("btnAssignModeAutomatic") || byId("btnAssignModePromptCancel")
-    preferred?.focus()
-  }
-}
-
-function resolveModePrompt(choice) {
-  const resolver = state.modePromptResolver
-  state.modePromptResolver = null
-  state.modePromptPromise = null
-  setModePromptOpen(false)
-  if (typeof resolver === "function") {
-    resolver(choice || null)
-  }
-}
-
-function promptForDamageMode() {
-  if (state.modePromptPromise) return state.modePromptPromise
-
-  const overlay = byId("assignModePromptOverlay")
-  if (!overlay) {
-    const useAutomatic = window.confirm("Apply damage in automatic mode?\n\nOK = Automatic\nCancel = Manual")
-    return Promise.resolve(useAutomatic ? "automatic" : "manual")
-  }
-
-  state.modePromptPromise = new Promise((resolve) => {
-    state.modePromptResolver = resolve
-    setModePromptOpen(true)
-  })
-  return state.modePromptPromise
 }
 
 function setWeaponPromptOpen(open) {
@@ -496,62 +381,6 @@ function syncDamageModeSelect(selectedMode) {
   select.value = normalized
 }
 
-function renderPhaserList(phasers, selectedKeys) {
-  const container = byId("assignNonBearingPhasersList")
-  const meta = byId("assignPhaserListMeta")
-  if (!container) return
-
-  const list = Array.isArray(phasers) ? phasers : []
-  const selected = new Set(Array.isArray(selectedKeys) ? selectedKeys.map((k) => String(k)) : [])
-  container.innerHTML = ""
-
-  if (meta) {
-    meta.textContent = list.length > 0
-      ? `Select any bearing phasers (${list.length} total).`
-      : "No phasers found in the active ship JSON."
-  }
-
-  if (list.length === 0) {
-    const empty = document.createElement("div")
-    empty.className = "phaserChoiceEmpty"
-    empty.textContent = "No phaser entries were found in this ship's SSD data."
-    container.appendChild(empty)
-    updatePhaserDropdownSummary()
-    syncPhaserDropdownToggleState()
-    return
-  }
-
-  for (const phaser of list) {
-    const row = document.createElement("label")
-    row.className = "phaserChoiceItem"
-
-    const checkbox = document.createElement("input")
-    checkbox.type = "checkbox"
-    checkbox.value = String(phaser?.key || "")
-    checkbox.checked = selected.has(String(phaser?.key || ""))
-    checkbox.addEventListener("change", () => {
-      updatePhaserDropdownSummary()
-      sendPreviewSelection()
-    })
-
-    const text = document.createElement("div")
-    text.className = "phaserChoiceLabel"
-    const strong = document.createElement("strong")
-    strong.textContent = String(phaser?.shortLabel || phaser?.fullLabel || "Phaser")
-    const sub = document.createElement("span")
-    sub.textContent = `Arc: ${String(phaser?.arc || "?")}`
-    text.appendChild(strong)
-    text.appendChild(sub)
-
-    row.appendChild(checkbox)
-    row.appendChild(text)
-    container.appendChild(row)
-  }
-
-  updatePhaserDropdownSummary()
-  syncPhaserDropdownToggleState()
-}
-
 function collectSelectedPhaserKeys() {
   const container = byId("assignNonBearingPhasersList")
   if (!container) return []
@@ -634,9 +463,6 @@ function closeWindow() {
     cancelWeaponPrompt()
     return
   }
-  if (isModePromptOpen()) {
-    resolveModePrompt(null)
-  }
   closeAssignDamageWindow()
 }
 
@@ -712,27 +538,6 @@ function init() {
   const modeSelect = byId("assignDamageMode")
   if (modeSelect) modeSelect.addEventListener("change", () => sendPreviewSelection())
 
-  const modePromptOverlay = byId("assignModePromptOverlay")
-  if (modePromptOverlay) {
-    modePromptOverlay.addEventListener("click", (event) => {
-      if (event.target === modePromptOverlay) {
-        resolveModePrompt(null)
-      }
-    })
-  }
-
-  const btnModePromptClose = byId("btnAssignModePromptClose")
-  if (btnModePromptClose) btnModePromptClose.addEventListener("click", () => resolveModePrompt(null))
-
-  const btnModePromptCancel = byId("btnAssignModePromptCancel")
-  if (btnModePromptCancel) btnModePromptCancel.addEventListener("click", () => resolveModePrompt(null))
-
-  const btnModeManual = byId("btnAssignModeManual")
-  if (btnModeManual) btnModeManual.addEventListener("click", () => resolveModePrompt("manual"))
-
-  const btnModeAutomatic = byId("btnAssignModeAutomatic")
-  if (btnModeAutomatic) btnModeAutomatic.addEventListener("click", () => resolveModePrompt("automatic"))
-
   const weaponPromptOverlay = byId("assignWeaponPromptOverlay")
   if (weaponPromptOverlay) {
     weaponPromptOverlay.addEventListener("click", (event) => {
@@ -793,11 +598,6 @@ function init() {
       if (isWeaponPromptOpen()) {
         event.preventDefault()
         cancelWeaponPrompt()
-        return
-      }
-      if (isModePromptOpen()) {
-        event.preventDefault()
-        resolveModePrompt(null)
         return
       }
       closeWindow()
